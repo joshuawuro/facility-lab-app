@@ -97,6 +97,7 @@ export function loadFacilitySettings(): FacilitySettings {
       ...DEFAULT_FACILITY_SETTINGS,
       ...parsed,
       logoUrl: parsed.logoUrl || DEFAULT_FACILITY_SETTINGS.logoUrl || '/logo.png',
+      doctors: Array.isArray(parsed.doctors) && parsed.doctors.length > 0 ? parsed.doctors : DEFAULT_FACILITY_SETTINGS.doctors,
     };
   } catch (e) {
     console.error('Failed to load facility settings', e);

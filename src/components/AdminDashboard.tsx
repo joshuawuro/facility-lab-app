@@ -184,7 +184,7 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({
   onViewReport,
 }) => {
   const { showSuccess, showError, showWarning, askConfirm } = useToast();
-  const [activeAdminTab, setActiveAdminTab] = useState<'stats' | 'catalog' | 'scientists' | 'facility' | 'backup'>('stats');
+  const [activeAdminTab, setActiveAdminTab] = useState<'stats' | 'catalog' | 'doctors' | 'scientists' | 'facility' | 'backup'>('stats');
 
   // Statistics Filter States
   const [searchTerm, setSearchTerm] = useState('');

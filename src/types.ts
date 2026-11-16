@@ -90,6 +90,7 @@ export interface FacilitySettings {
   scientistName: string;
   scientistTitle: string;
   logoUrl?: string; // base64 data url
+  doctors?: string[]; // Referring doctors e.g. ['Dr. Alex', 'Dr. Joshua', 'Dr. Obuobi', 'Dr. Jennifer', 'Self']
 }
 
 export type UserRole = 'admin' | 'scientist';

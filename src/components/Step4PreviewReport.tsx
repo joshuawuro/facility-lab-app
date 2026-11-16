@@ -1,4 +1,4 @@
-import React, { useRef } from 'react';
+import React, { useRef, useState, useEffect } from 'react';
 import {
   Printer,
   Download,
@@ -18,6 +18,7 @@ interface Step4PreviewReportProps {
   patient: PatientDetails;
   facilitySettings: FacilitySettings;
   currentUser?: UserAccount;
+  isAlreadySaved?: boolean;
   onEdit: () => void;
   onSaveReport: () => void;
   onNewPatient: () => void;
@@ -29,11 +30,18 @@ export const Step4PreviewReport: React.FC<Step4PreviewReportProps> = ({
   patient,
   facilitySettings,
   currentUser,
+  isAlreadySaved = false,
   onEdit,
   onSaveReport,
   onNewPatient,
 }) => {
   const printAreaRef = useRef<HTMLDivElement>(null);
+  const [isSaved, setIsSaved] = useState<boolean>(isAlreadySaved);
+  const [isDownloading, setIsDownloading] = useState<boolean>(false);
+
+  useEffect(() => {
+    setIsSaved(isAlreadySaved);
+  }, [isAlreadySaved]);
 
   const getTestDef = (testId: string): LabTest | undefined => {
     return catalog.find((t) => t.id === testId);
@@ -67,15 +75,103 @@ export const Step4PreviewReport: React.FC<Step4PreviewReportProps> = ({
     })
     .filter((item): item is NonNullable<typeof item> => item !== null && item.params.length > 0);
 
+  const handleSave = () => {
+    onSaveReport();
+    setIsSaved(true);
+  };
+
   const handlePrint = () => {
+    if (!isSaved) {
+      alert('Cannot print report: Please click "Save Report" first before printing.');
+      return;
+    }
     window.print();
   };
 
   const handleDownloadPDF = () => {
-    // Standard best practice in modern browsers for pristine vector PDFs:
-    // Invoke window.print() which prompts browser PDF printer with exact CSS,
-    // or trigger save dialog.
-    window.print();
+    if (!isSaved) {
+      alert('Cannot download report: Please click "Save Report" first before downloading.');
+      return;
+    }
+
+    setIsDownloading(true);
+    const element = printAreaRef.current;
+    if (!element) {
+      setIsDownloading(false);
+      return;
+    }
+
+    const patientName = (patient.name || 'Patient').trim().replace(/[^a-zA-Z0-9_-]/g, '_');
+    const fileName = `${patientName}_Lab_Report_${patient.sampleId || Date.now()}`;
+
+    const triggerDirectDownload = () => {
+      const fullHtml = `<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <title>${patient.name} - Laboratory Report</title>
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <script src="https://cdn.tailwindcss.com"></script>
+  <style>
+    @media print {
+      body { margin: 0; padding: 0; background: #fff !important; }
+      @page { size: A4 portrait; margin: 8mm; }
+    }
+    body { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif; background: #fff; margin: 0; padding: 10px; display: flex; justify-content: center; }
+    .report-wrap { width: 100%; max-width: 210mm; min-height: 297mm; background: #fff; }
+  </style>
+</head>
+<body>
+  <div class="report-wrap">
+    ${element.innerHTML}
+  </div>
+</body>
+</html>`;
+
+      const blob = new Blob([fullHtml], { type: 'text/html;charset=utf-8' });
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement('a');
+      a.href = url;
+      a.download = `${fileName}.html`;
+      document.body.appendChild(a);
+      a.click();
+      document.body.removeChild(a);
+      URL.revokeObjectURL(url);
+      setIsDownloading(false);
+    };
+
+    if ((window as any).html2pdf) {
+      const opt = {
+        margin: [6, 6, 6, 6],
+        filename: `${fileName}.pdf`,
+        image: { type: 'jpeg', quality: 0.98 },
+        html2canvas: { scale: 2, useCORS: true },
+        jsPDF: { unit: 'mm', format: 'a4', orientation: 'portrait' },
+      };
+      (window as any).html2pdf().from(element).set(opt).save()
+        .then(() => setIsDownloading(false))
+        .catch(() => triggerDirectDownload());
+      return;
+    }
+
+    const script = document.createElement('script');
+    script.src = 'https://cdnjs.cloudflare.com/ajax/libs/html2pdf.js/0.10.1/html2pdf.bundle.min.js';
+    script.onload = () => {
+      const opt = {
+        margin: [6, 6, 6, 6],
+        filename: `${fileName}.pdf`,
+        image: { type: 'jpeg', quality: 0.98 },
+        html2canvas: { scale: 2, useCORS: true },
+        jsPDF: { unit: 'mm', format: 'a4', orientation: 'portrait' },
+      };
+      (window as any).html2pdf().from(element).set(opt).save()
+        .then(() => setIsDownloading(false))
+        .catch(() => triggerDirectDownload());
+    };
+    script.onerror = () => {
+      triggerDirectDownload();
+    };
+    document.head.appendChild(script);
   };
 
   const isSingleTest = testsWithResults.length === 1;
@@ -88,43 +184,71 @@ export const Step4PreviewReport: React.FC<Step4PreviewReportProps> = ({
           <span className="text-xs font-semibold tracking-wider uppercase text-teal-700">Step 4 of 4</span>
           <h2 className="text-xl font-bold text-slate-900 flex items-center gap-2">
             <FileCheck2 className="w-5 h-5 text-teal-600" />
-            <span>Report Preview & Actions</span>
+            <span>Report Preview &amp; Actions</span>
           </h2>
-          <p className="text-slate-500 text-xs">
-            A4 Print-Ready Document. Empty parameters are automatically omitted. Flags are bolded for B&W printing.
+          <p className="text-slate-500 text-xs mt-0.5">
+            A4 Print-Ready Document. Saving is required before downloading or printing.
           </p>
         </div>
 
-        {/* Buttons */}
-        <div className="flex flex-wrap items-center gap-2">
+        {/* Buttons & Status Pill */}
+        <div className="flex flex-wrap items-center gap-2.5">
+          {/* Status Indicator */}
+          {!isSaved ? (
+            <span className="text-[11px] font-bold text-amber-800 bg-amber-50 border border-amber-300 px-3 py-1.5 rounded-lg flex items-center gap-1.5 shadow-2xs">
+              <span className="w-2 h-2 rounded-full bg-amber-500 animate-pulse" />
+              <span>Unsaved &bull; Save first to enable Download/Print</span>
+            </span>
+          ) : (
+            <span className="text-[11px] font-bold text-emerald-800 bg-emerald-50 border border-emerald-300 px-3 py-1.5 rounded-lg flex items-center gap-1.5 shadow-2xs">
+              <CheckCircle className="w-3.5 h-3.5 text-emerald-600" />
+              <span>Report Finalized &amp; Saved</span>
+            </span>
+          )}
+
           <button
             onClick={onEdit}
-            className="px-3.5 py-2 rounded-lg border border-slate-300 text-slate-700 hover:bg-slate-50 text-xs font-semibold flex items-center space-x-1.5 transition-colors"
+            className="px-3.5 py-2 rounded-lg border border-slate-300 text-slate-700 hover:bg-slate-50 text-xs font-semibold flex items-center space-x-1.5 transition-colors cursor-pointer"
           >
             <Edit3 className="w-4 h-4 text-slate-500" />
             <span>Edit Results</span>
           </button>
 
           <button
-            onClick={onSaveReport}
-            className="px-3.5 py-2 rounded-lg bg-emerald-600 hover:bg-emerald-700 text-white text-xs font-semibold flex items-center space-x-1.5 transition-colors shadow-xs"
+            onClick={handleSave}
+            className={`px-3.5 py-2 rounded-lg text-white text-xs font-semibold flex items-center space-x-1.5 transition-colors shadow-xs cursor-pointer ${
+              isSaved
+                ? 'bg-emerald-700 hover:bg-emerald-800 ring-2 ring-emerald-300'
+                : 'bg-emerald-600 hover:bg-emerald-700 animate-pulse'
+            }`}
           >
             <Save className="w-4 h-4" />
-            <span>Save Report</span>
+            <span>{isSaved ? 'Update Saved Report' : 'Save Report'}</span>
           </button>
 
           <button
             onClick={handleDownloadPDF}
-            className="px-3.5 py-2 rounded-lg bg-teal-700 hover:bg-teal-800 text-white text-xs font-semibold flex items-center space-x-1.5 transition-colors shadow-xs"
-            title="Download or Save as PDF"
+            disabled={!isSaved || isDownloading}
+            className={`px-3.5 py-2 rounded-lg text-xs font-semibold flex items-center space-x-1.5 transition-all shadow-xs ${
+              isSaved && !isDownloading
+                ? 'bg-teal-700 hover:bg-teal-800 text-white cursor-pointer'
+                : 'bg-slate-200 text-slate-400 border border-slate-300 cursor-not-allowed opacity-60'
+            }`}
+            title={isSaved ? 'Automatically download report file' : 'Save report first to enable download'}
           >
             <Download className="w-4 h-4" />
-            <span>Download PDF</span>
+            <span>{isDownloading ? 'Downloading...' : 'Download PDF'}</span>
           </button>
 
           <button
             onClick={handlePrint}
-            className="px-4 py-2 rounded-lg bg-slate-900 hover:bg-black text-white text-xs font-bold flex items-center space-x-1.5 transition-colors shadow-xs"
+            disabled={!isSaved}
+            className={`px-4 py-2 rounded-lg text-xs font-bold flex items-center space-x-1.5 transition-all shadow-xs ${
+              isSaved
+                ? 'bg-slate-900 hover:bg-black text-white cursor-pointer'
+                : 'bg-slate-200 text-slate-400 border border-slate-300 cursor-not-allowed opacity-60'
+            }`}
+            title={isSaved ? 'Print report' : 'Save report first to enable printing'}
           >
             <Printer className="w-4 h-4 text-teal-400" />
             <span>Print Report</span>
@@ -132,7 +256,7 @@ export const Step4PreviewReport: React.FC<Step4PreviewReportProps> = ({
 
           <button
             onClick={onNewPatient}
-            className="px-3.5 py-2 rounded-lg border border-teal-600 text-teal-700 hover:bg-teal-50 text-xs font-semibold flex items-center space-x-1.5 transition-colors"
+            className="px-3.5 py-2 rounded-lg border border-teal-600 text-teal-700 hover:bg-teal-50 text-xs font-semibold flex items-center space-x-1.5 transition-colors cursor-pointer"
           >
             <PlusCircle className="w-4 h-4" />
             <span>New Patient</span>

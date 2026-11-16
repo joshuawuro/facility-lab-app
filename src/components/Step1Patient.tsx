@@ -1,4 +1,4 @@
-import React from 'react';
+import React, { useState } from 'react';
 import {
   User,
   Calendar,
@@ -9,18 +9,29 @@ import {
   Activity,
   Check,
   Sparkles,
+  ChevronDown,
 } from './Icons';
-import { PatientDetails, SampleType } from '../types';
+import { PatientDetails, SampleType, FacilitySettings } from '../types';
 import { useToast } from '../context/ToastContext';
 
 interface Step1PatientProps {
   patient: PatientDetails;
+  facilitySettings?: FacilitySettings;
   onChange: (updated: PatientDetails) => void;
   onNext: () => void;
 }
 
-export const Step1Patient: React.FC<Step1PatientProps> = ({ patient, onChange, onNext }) => {
+export const Step1Patient: React.FC<Step1PatientProps> = ({ patient, facilitySettings, onChange, onNext }) => {
   const { showWarning } = useToast();
+
+  const defaultDoctors = ['Dr. Alex', 'Dr. Joshua', 'Dr. Obuobi', 'Dr. Jennifer', 'Self'];
+  const doctorsList = facilitySettings?.doctors && facilitySettings.doctors.length > 0
+    ? facilitySettings.doctors
+    : defaultDoctors;
+
+  const [isCustomDoctor, setIsCustomDoctor] = useState(
+    patient.requestedBy ? !doctorsList.includes(patient.requestedBy) : false
+  );
 
   const updateField = <K extends keyof PatientDetails>(key: K, value: PatientDetails[K]) => {
     onChange({ ...patient, [key]: value });
@@ -291,15 +302,45 @@ export const Step1Patient: React.FC<Step1PatientProps> = ({ patient, onChange, o
 
                   <div>
                     <label className="block text-[11px] font-bold uppercase tracking-wider text-slate-600 dark:text-slate-400 mb-1.5 ml-1">
-                      Requested By
+                      Requested By (Doctor)
                     </label>
-                    <input
-                      type="text"
-                      placeholder="e.g. Dr. Mensah / OPD"
-                      value={patient.requestedBy}
-                      onChange={(e) => updateField('requestedBy', e.target.value)}
-                      className="w-full px-4 py-3 rounded-full border border-slate-200 dark:border-slate-700 bg-slate-50/70 dark:bg-slate-800/80 text-slate-900 dark:text-white text-xs font-semibold focus:outline-none focus:ring-2 focus:ring-teal-500/30 focus:border-teal-600 transition-all placeholder:text-slate-400 shadow-2xs"
-                    />
+                    <div className="relative">
+                      <select
+                        value={isCustomDoctor ? '__custom__' : patient.requestedBy || 'Self'}
+                        onChange={(e) => {
+                          const val = e.target.value;
+                          if (val === '__custom__') {
+                            setIsCustomDoctor(true);
+                            updateField('requestedBy', '');
+                          } else {
+                            setIsCustomDoctor(false);
+                            updateField('requestedBy', val);
+                          }
+                        }}
+                        className="w-full px-4 py-3 rounded-full border border-slate-200 dark:border-slate-700 bg-slate-50/70 dark:bg-slate-800/80 text-slate-900 dark:text-white text-xs font-bold focus:outline-none focus:ring-2 focus:ring-teal-500/30 focus:border-teal-600 transition-all shadow-2xs appearance-none cursor-pointer pr-10"
+                      >
+                        {doctorsList.map((doc) => (
+                          <option key={doc} value={doc}>
+                            {doc}
+                          </option>
+                        ))}
+                        <option value="__custom__">+ Other (Type Doctor Name)...</option>
+                      </select>
+                      <div className="absolute right-4 top-1/2 -translate-y-1/2 text-slate-400 pointer-events-none">
+                        <ChevronDown className="w-4 h-4" />
+                      </div>
+                    </div>
+
+                    {isCustomDoctor && (
+                      <input
+                        type="text"
+                        placeholder="Type referring doctor name..."
+                        value={patient.requestedBy}
+                        onChange={(e) => updateField('requestedBy', e.target.value)}
+                        autoFocus
+                        className="mt-2 w-full px-4 py-2.5 rounded-full border border-teal-300 dark:border-teal-700 bg-teal-50/50 dark:bg-teal-950/40 text-slate-900 dark:text-white text-xs font-semibold focus:outline-none focus:ring-2 focus:ring-teal-500/30 transition-all placeholder:text-slate-400 shadow-2xs"
+                      />
+                    )}
                   </div>
                 </div>
               </div>

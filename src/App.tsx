@@ -49,7 +49,7 @@ const getInitialPatient = (): PatientDetails => {
     sampleType: 'Blood',
     sampleTypes: ['Blood'],
     receiptNumber: '',
-    requestedBy: '',
+    requestedBy: 'Self',
   };
 };
 
@@ -384,6 +384,7 @@ export const App: React.FC = () => {
             patient={adminViewingReport.patient}
             facilitySettings={facilitySettings}
             currentUser={currentUser}
+            isAlreadySaved={true}
             onEdit={() => { }}
             onSaveReport={() => { }}
             onNewPatient={() => setAdminViewingReport(null)}
@@ -448,6 +449,7 @@ export const App: React.FC = () => {
               <div key="step-1" className="animate-slide-up">
                 <Step1Patient
                   patient={patient}
+                  facilitySettings={facilitySettings}
                   onChange={setPatient}
                   onNext={() => {
                     handleAutoSavePending(patient, selectedTests, true);
@@ -503,6 +505,7 @@ export const App: React.FC = () => {
                   patient={patient}
                   facilitySettings={facilitySettings}
                   currentUser={currentUser}
+                  isAlreadySaved={recentReports.some((r) => r.id === currentReportId && r.status === 'completed')}
                   onEdit={() => setCurrentStep(3)}
                   onSaveReport={handleSaveCurrentReport}
                   onNewPatient={handleNewPatient}

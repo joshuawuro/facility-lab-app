@@ -1,5 +1,13 @@
 import { LabTest, FacilitySettings } from '../types';
 
+export const DEFAULT_DOCTORS: string[] = [
+  'Dr. Alex',
+  'Dr. Joshua',
+  'Dr. Obuobi',
+  'Dr. Jennifer',
+  'Self',
+];
+
 export const DEFAULT_FACILITY_SETTINGS: FacilitySettings = {
   facilityName: 'CARE AND SOCIAL POLYCLINIC',
   poBox: 'P. O. BOX 2425',
@@ -9,6 +17,7 @@ export const DEFAULT_FACILITY_SETTINGS: FacilitySettings = {
   scientistName: 'Kwame Mensah, MLS',
   scientistTitle: 'Lab Scientist',
   logoUrl: '/logo.png',
+  doctors: DEFAULT_DOCTORS,
 };
 
 export const DEFAULT_TEST_CATALOG: LabTest[] = [
