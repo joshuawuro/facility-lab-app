@@ -8,8 +8,7 @@ export default {
   theme: {
     extend: {
       fontFamily: {
-        sans: ['Montserrat', '"Plus Jakarta Sans"', '"Google Sans"', 'system-ui', '-apple-system', 'Segoe UI', 'Roboto', 'sans-serif'],
-        serif: ['Georgia', 'Cambria', '"Times New Roman"', 'Times', 'serif'],
+        sans: ['Figtree', 'system-ui', '-apple-system', 'BlinkMacSystemFont', '"Segoe UI"', 'Roboto', 'sans-serif'],
       },
     },
   },

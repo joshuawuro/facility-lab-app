@@ -664,10 +664,16 @@ export const Step2SelectTests: React.FC<Step2SelectTestsProps> = ({
             {/* Primary Proceed CTA Button */}
             <button
               type="button"
-              disabled={totalSelectedCount === 0}
-              onClick={onNext}
+              disabled={totalSelectedCount === 0 || totalParametersSelected === 0}
+              onClick={() => {
+                if (totalSelectedCount === 0 || totalParametersSelected === 0) {
+                  showWarning('Please select at least one laboratory test with parameters before proceeding.');
+                  return;
+                }
+                onNext();
+              }}
               className={`w-full py-4 rounded-full text-xs font-black flex items-center justify-center space-x-2 shadow-md transition-all ${
-                totalSelectedCount > 0
+                totalSelectedCount > 0 && totalParametersSelected > 0
                   ? 'bg-teal-700 hover:bg-teal-800 text-white shadow-teal-700/25 cursor-pointer active:scale-[0.98]'
                   : 'bg-slate-200 text-slate-400 cursor-not-allowed'
               }`}

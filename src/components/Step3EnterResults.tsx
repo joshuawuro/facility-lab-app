@@ -1,4 +1,4 @@
-import React, { useEffect, useRef, useMemo } from 'react';
+import React, { useEffect, useRef, useMemo, useState } from 'react';
 import {
   ArrowLeft,
   ArrowRight,
@@ -10,6 +10,7 @@ import {
 } from './Icons';
 import { LabTest, SelectedTestState, PatientDetails, TestParameter } from '../types';
 import { evaluateFlag, getDisplayReferenceRange, checkFbcConsistency } from '../utils/flagging';
+import { useToast } from '../context/ToastContext';
 
 interface Step3EnterResultsProps {
   catalog: LabTest[];
@@ -28,7 +29,9 @@ export const Step3EnterResults: React.FC<Step3EnterResultsProps> = ({
   onNext,
   onBack,
 }) => {
+  const { showWarning } = useToast();
   const containerRef = useRef<HTMLDivElement>(null);
+  const [attemptedSubmit, setAttemptedSubmit] = useState(false);
 
   // Auto-focus first input on mount
   useEffect(() => {
@@ -42,7 +45,51 @@ export const Step3EnterResults: React.FC<Step3EnterResultsProps> = ({
     }
   }, []);
 
-  // Fast Keyboard Navigation (Enter or Tab key moves to next result field)
+  // Compute all missing parameters across all selected tests
+  const missingParams = useMemo(() => {
+    const list: { testId: string; testName: string; paramId: string; paramName: string }[] = [];
+    selectedTests.forEach((st) => {
+      const def = catalog.find((c) => c.id === st.testId);
+      if (!def) return;
+      const activeParamIds = st.selectedParameterIds || [];
+      activeParamIds.forEach((pid) => {
+        const val = st.results ? st.results[pid] : undefined;
+        if (val === undefined || val === null || val.trim() === '') {
+          const pDef = def.parameters.find((p) => p.id === pid);
+          list.push({
+            testId: st.testId,
+            testName: def.name,
+            paramId: pid,
+            paramName: pDef?.name || pid,
+          });
+        }
+      });
+    });
+    return list;
+  }, [selectedTests, catalog]);
+
+  // Proceed with strict validation: every selected test must have results entered
+  const handleProceed = () => {
+    setAttemptedSubmit(true);
+    if (missingParams.length > 0) {
+      const firstMissing = missingParams[0];
+      showWarning(
+        `Cannot proceed to Step 4: Missing results for ${missingParams.length} analyte(s). Please enter "${firstMissing.paramName}" (${firstMissing.testName}).`
+      );
+      // Focus and scroll to first missing input
+      const targetInput = containerRef.current?.querySelector<HTMLInputElement | HTMLSelectElement>(
+        `[data-param-id="${firstMissing.paramId}"]`
+      );
+      if (targetInput) {
+        targetInput.focus();
+        targetInput.scrollIntoView({ behavior: 'smooth', block: 'center' });
+      }
+      return;
+    }
+    onNext();
+  };
+
+  // Fast Keyboard Navigation (Enter moves to next result field)
   const handleKeyDown = (e: React.KeyboardEvent<HTMLElement>) => {
     if (e.key === 'Enter') {
       e.preventDefault();
@@ -55,7 +102,7 @@ export const Step3EnterResults: React.FC<Step3EnterResultsProps> = ({
       if (currentIndex >= 0 && currentIndex < allInputs.length - 1) {
         allInputs[currentIndex + 1].focus();
       } else if (currentIndex === allInputs.length - 1) {
-        onNext();
+        handleProceed();
       }
     }
   };
@@ -208,12 +255,16 @@ export const Step3EnterResults: React.FC<Step3EnterResultsProps> = ({
                       const flag = evaluateFlag(param, curVal, patient.sex);
                       const displayRange = getDisplayReferenceRange(param, patient.sex);
                       const isQualitative = param.rangeType === 'qualitative' && param.qualitativeOptions;
+                      const isBlank = !curVal || !curVal.trim();
+                      const isMissingOnAttempt = attemptedSubmit && isBlank;
 
                       return (
                         <tr
                           key={param.id}
                           className={`hover:bg-slate-50/80 dark:hover:bg-slate-800/40 transition-colors ${
-                            flag === 'H'
+                            isMissingOnAttempt
+                              ? 'bg-rose-50/60 dark:bg-rose-950/30'
+                              : flag === 'H'
                               ? 'bg-rose-50/40 dark:bg-rose-950/20'
                               : flag === 'L'
                               ? 'bg-sky-50/40 dark:bg-sky-950/20'
@@ -224,7 +275,14 @@ export const Step3EnterResults: React.FC<Step3EnterResultsProps> = ({
                         >
                           {/* Parameter Name */}
                           <td className="py-2.5 px-4 font-semibold text-slate-800 dark:text-slate-200">
-                            <span>{param.name}</span>
+                            <div className="flex items-center space-x-1.5">
+                              <span>{param.name}</span>
+                              {isMissingOnAttempt && (
+                                <span className="inline-flex items-center text-[10px] font-bold text-rose-600 bg-rose-100 px-1.5 py-0.2 rounded">
+                                  Required
+                                </span>
+                              )}
+                            </div>
                             {param.subCategory && (
                               <span className="block text-[10px] text-slate-400 dark:text-slate-500 font-normal">
                                 {param.subCategory}
@@ -237,11 +295,14 @@ export const Step3EnterResults: React.FC<Step3EnterResultsProps> = ({
                             {isQualitative ? (
                               <select
                                 data-lab-input="true"
+                                data-param-id={param.id}
                                 value={curVal}
                                 onChange={(e) => updateResultValue(testDef.id, param.id, e.target.value)}
                                 onKeyDown={handleKeyDown}
                                 className={`w-full py-1.5 px-2.5 rounded-lg border text-xs sm:text-sm font-semibold transition-all focus:outline-none focus:ring-2 ${
-                                  flag === 'ABNORMAL'
+                                  isMissingOnAttempt
+                                    ? 'border-rose-500 bg-rose-50/60 text-rose-900 ring-2 ring-rose-200 focus:ring-rose-400'
+                                    : flag === 'ABNORMAL'
                                     ? 'border-rose-400 dark:border-rose-600 bg-rose-50/60 dark:bg-rose-950/60 text-rose-900 dark:text-rose-200'
                                     : curVal
                                     ? 'border-slate-300 dark:border-slate-700 bg-white dark:bg-slate-800 text-slate-900 dark:text-white'
@@ -258,6 +319,7 @@ export const Step3EnterResults: React.FC<Step3EnterResultsProps> = ({
                             ) : (
                               <input
                                 data-lab-input="true"
+                                data-param-id={param.id}
                                 type="text"
                                 inputMode="decimal"
                                 placeholder="Type result..."
@@ -265,7 +327,9 @@ export const Step3EnterResults: React.FC<Step3EnterResultsProps> = ({
                                 onChange={(e) => updateResultValue(testDef.id, param.id, e.target.value)}
                                 onKeyDown={handleKeyDown}
                                 className={`w-full py-1.5 px-3 rounded-lg border text-xs sm:text-sm font-semibold transition-all focus:outline-none focus:ring-2 ${
-                                  flag === 'H'
+                                  isMissingOnAttempt
+                                    ? 'border-rose-500 bg-rose-50/60 text-rose-900 ring-2 ring-rose-200 focus:ring-rose-400'
+                                    : flag === 'H'
                                     ? 'border-red-400 dark:border-red-600 bg-red-50/50 dark:bg-red-950/50 text-red-700 dark:text-red-300 font-bold'
                                     : flag === 'L'
                                     ? 'border-blue-400 dark:border-blue-600 bg-blue-50/50 dark:bg-blue-950/50 text-blue-700 dark:text-blue-300 font-bold'
@@ -350,14 +414,26 @@ export const Step3EnterResults: React.FC<Step3EnterResultsProps> = ({
           <span>Back: Select Tests</span>
         </button>
 
-        <button
-          type="button"
-          onClick={onNext}
-          className="px-8 py-3.5 bg-teal-700 hover:bg-teal-800 text-white rounded-full text-sm font-extrabold transition-all flex items-center space-x-2 shadow-md shadow-teal-700/25 group cursor-pointer"
-        >
-          <span>Next: Preview & Print Report</span>
-          <ArrowRight className="w-4 h-4 transition-transform group-hover:translate-x-1" />
-        </button>
+        <div className="flex items-center space-x-3">
+          {missingParams.length > 0 && (
+            <span className="hidden sm:inline-flex items-center px-3 py-1 rounded-full text-xs font-bold bg-amber-50 text-amber-800 border border-amber-200">
+              {missingParams.length} result{missingParams.length !== 1 ? 's' : ''} left to enter
+            </span>
+          )}
+
+          <button
+            type="button"
+            onClick={handleProceed}
+            className={`px-8 py-3.5 rounded-full text-sm font-extrabold transition-all flex items-center space-x-2 shadow-md group cursor-pointer ${
+              missingParams.length === 0
+                ? 'bg-teal-700 hover:bg-teal-800 text-white shadow-teal-700/25'
+                : 'bg-amber-600 hover:bg-amber-700 text-white shadow-amber-600/20'
+            }`}
+          >
+            <span>Next: Preview &amp; Print Report</span>
+            <ArrowRight className="w-4 h-4 transition-transform group-hover:translate-x-1" />
+          </button>
+        </div>
       </div>
     </div>
   );

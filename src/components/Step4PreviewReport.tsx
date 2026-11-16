@@ -1,4 +1,6 @@
-import React, { useRef, useState, useEffect } from 'react';
+/* In the print dialog choose A4, scale 100%, margins None, and turn off Headers and footers. */
+
+import React, { useRef, useState, useEffect, useMemo } from 'react';
 import {
   Printer,
   Download,
@@ -6,11 +8,17 @@ import {
   PlusCircle,
   Edit3,
   CheckCircle,
-  Building2,
   FileCheck2,
-} from 'lucide-react';
-import { LabTest, SelectedTestState, PatientDetails, FacilitySettings, UserAccount } from '../types';
+} from './Icons';
+import {
+  LabTest,
+  SelectedTestState,
+  PatientDetails,
+  FacilitySettings,
+  UserAccount,
+} from '../types';
 import { evaluateFlag, getDisplayReferenceRange } from '../utils/flagging';
+import { useToast } from '../context/ToastContext';
 
 interface Step4PreviewReportProps {
   catalog: LabTest[];
@@ -24,6 +32,17 @@ interface Step4PreviewReportProps {
   onNewPatient: () => void;
 }
 
+const DEFAULT_LOGO_SVG =
+  'data:image/svg+xml;utf8,' +
+  encodeURIComponent(
+    `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 100 100" fill="none">
+      <rect width="100" height="100" rx="20" fill="#0f766e"/>
+      <path d="M50 20v60M20 50h60" stroke="#ffffff" stroke-width="12" stroke-linecap="round"/>
+      <circle cx="50" cy="50" r="14" fill="#ffffff"/>
+      <circle cx="50" cy="50" r="8" fill="#0f766e"/>
+    </svg>`
+  );
+
 export const Step4PreviewReport: React.FC<Step4PreviewReportProps> = ({
   catalog,
   selectedTests,
@@ -35,6 +54,7 @@ export const Step4PreviewReport: React.FC<Step4PreviewReportProps> = ({
   onSaveReport,
   onNewPatient,
 }) => {
+  const { showWarning, showSuccess } = useToast();
   const printAreaRef = useRef<HTMLDivElement>(null);
   const [isSaved, setIsSaved] = useState<boolean>(isAlreadySaved);
   const [isDownloading, setIsDownloading] = useState<boolean>(false);
@@ -43,46 +63,262 @@ export const Step4PreviewReport: React.FC<Step4PreviewReportProps> = ({
     setIsSaved(isAlreadySaved);
   }, [isAlreadySaved]);
 
-  const getTestDef = (testId: string): LabTest | undefined => {
-    return catalog.find((t) => t.id === testId);
-  };
+  // Format current date and time: e.g. 16 Nov 2026, 09:30
+  const formattedPrintDate = useMemo(() => {
+    const now = new Date();
+    return (
+      now.toLocaleDateString('en-GB', {
+        day: '2-digit',
+        month: 'short',
+        year: 'numeric',
+      }) +
+      ', ' +
+      now.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })
+    );
+  }, []);
 
-  const now = new Date();
-  const formattedPrintDate = now.toLocaleDateString('en-GB', {
-    day: '2-digit',
-    month: 'short',
-    year: 'numeric',
-  }) + ' ' + now.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+  // ─────────────────────────────────────────────────────────────────────────────
+  // DATA: Single central JavaScript object driving the laboratory report
+  // ─────────────────────────────────────────────────────────────────────────────
+  const reportData = useMemo(() => {
+    // Process tests and rows dynamically
+    const processedTests = selectedTests
+      .map((st) => {
+        const def = catalog.find((c) => c.id === st.testId);
+        if (!def) return null;
 
-  // Filter tests that have at least one non-empty result
-  const testsWithResults = selectedTests
-    .map((st) => {
-      const def = getTestDef(st.testId);
-      if (!def) return null;
+        const activeParamIds = st.selectedParameterIds || [];
+        const rows = def.parameters
+          .filter((p) => {
+            const isTicked = activeParamIds.includes(p.id);
+            const val = st.results ? st.results[p.id] : undefined;
+            return isTicked && val !== undefined && val !== null && val.trim() !== '';
+          })
+          .map((p) => {
+            const rawVal = st.results[p.id].trim();
+            const low = p.isSexSpecific
+              ? patient.sex === 'Male'
+                ? p.maleMin
+                : p.femaleMin
+              : p.min;
+            const high = p.isSexSpecific
+              ? patient.sex === 'Male'
+                ? p.maleMax
+                : p.femaleMax
+              : p.max;
+            const refText = getDisplayReferenceRange(p, patient.sex);
 
-      // Filter parameters that were ticked AND have a non-empty result entered
-      const filledParams = def.parameters.filter((p) => {
-        const isTicked = st.selectedParameterIds.includes(p.id);
-        const val = st.results[p.id];
-        return isTicked && val !== undefined && val.trim() !== '';
+            // Automatic flag evaluation
+            let flag: 'H' | 'L' | 'ABNORMAL' | null = null;
+            const num = parseFloat(rawVal);
+            if (!isNaN(num)) {
+              if (high !== undefined && high !== null && num > high) {
+                flag = 'H';
+              } else if (low !== undefined && low !== null && num < low) {
+                flag = 'L';
+              }
+            }
+            if (!flag) {
+              const evalFlag = evaluateFlag(p, rawVal, patient.sex);
+              if (evalFlag === 'H' || evalFlag === 'L' || evalFlag === 'ABNORMAL') {
+                flag = evalFlag;
+              }
+            }
+
+            const isAbnormal = flag !== null;
+
+            return {
+              parameter: p.name + (p.subCategory ? ` (${p.subCategory})` : ''),
+              result: rawVal,
+              unit: p.unit || '',
+              low,
+              high,
+              refText,
+              flag,
+              isAbnormal,
+            };
+          });
+
+        if (rows.length === 0) return null;
+
+        return {
+          title: def.name,
+          comments: st.comments || '',
+          cyclePhase: st.cyclePhase || '',
+          rows,
+        };
+      })
+      .filter((t): t is NonNullable<typeof t> => t !== null);
+
+    return {
+      clinic: {
+        name: facilitySettings.facilityName || 'CARE AND SOCIAL POLYCLINIC',
+        servicesLine: facilitySettings.serviceTitle || 'Laboratory Service',
+        address: facilitySettings.address || 'Adjacent Puma Filling Station, Madina Estate',
+        poBox: facilitySettings.poBox || 'P. O. Box 2425',
+        phone: facilitySettings.telephone || '053 197 6621',
+        logo: facilitySettings.logoUrl || DEFAULT_LOGO_SVG,
+      },
+      patient: {
+        name: patient.name || '-',
+        sex: patient.sex || '-',
+        age: patient.age ? `${patient.age} yrs` : '-',
+        sampleId: patient.sampleId || '-',
+        sampleType:
+          patient.sampleType === 'Other' && patient.customSampleType
+            ? patient.customSampleType
+            : patient.sampleType || 'Blood',
+        receiptNumber: patient.receiptNumber || '-',
+        collectionDate: patient.sampleCollectionDate || '-',
+        collectionTime: patient.collectionTime || '-',
+        reportDate: patient.resultsDate || '-',
+        requestedBy: patient.requestedBy || 'Self',
+      },
+      tests: processedTests,
+      scientist: {
+        name: currentUser?.displayName || facilitySettings.scientistName || 'Kwame Mensah, MLS',
+        title: currentUser?.title || facilitySettings.scientistTitle || 'Medical Laboratory Scientist',
+      },
+      printedAt: formattedPrintDate,
+    };
+  }, [catalog, selectedTests, patient, facilitySettings, currentUser, formattedPrintDate]);
+
+  // ─────────────────────────────────────────────────────────────────────────────
+  // A4 MULTI-PAGE FLOW ENGINE
+  // Intelligently partitions tests across A4 sheets so content never cuts off
+  // ─────────────────────────────────────────────────────────────────────────────
+  interface SheetPage {
+    pageNumber: number;
+    totalPages: number;
+    isFirstPage: boolean;
+    isLastPage: boolean;
+    tests: Array<{
+      title: string;
+      isContinuation?: boolean;
+      comments?: string;
+      cyclePhase?: string;
+      rows: Array<{
+        parameter: string;
+        result: string;
+        unit: string;
+        low?: number;
+        high?: number;
+        refText: string;
+        flag: 'H' | 'L' | 'ABNORMAL' | null;
+        isAbnormal: boolean;
+      }>;
+    }>;
+  }
+
+  const sheets: SheetPage[] = useMemo(() => {
+    const rawTests = reportData.tests;
+    if (rawTests.length === 0) {
+      return [
+        {
+          pageNumber: 1,
+          totalPages: 1,
+          isFirstPage: true,
+          isLastPage: true,
+          tests: [],
+        },
+      ];
+    }
+
+    const pages: SheetPage[] = [];
+    const PAGE1_ROW_LIMIT = 18; // Page 1 has full header and patient block
+    const SUBSEQUENT_PAGE_ROW_LIMIT = 24; // Page 2+ has compact header
+
+    let currentPageTests: SheetPage['tests'] = [];
+    let currentRowCount = 0;
+    let isFirst = true;
+
+    for (const test of rawTests) {
+      let remainingRows = [...test.rows];
+      let isFirstChunkOfTest = true;
+
+      while (remainingRows.length > 0) {
+        const currentLimit = isFirst ? PAGE1_ROW_LIMIT : SUBSEQUENT_PAGE_ROW_LIMIT;
+        // Test heading weight is equivalent to ~2 rows
+        const availableCapacity = currentLimit - currentRowCount;
+
+        // If not enough room for test title + at least 1 row, break to new sheet
+        if (availableCapacity < 3 && currentRowCount > 0) {
+          pages.push({
+            pageNumber: pages.length + 1,
+            totalPages: 1,
+            isFirstPage: isFirst,
+            isLastPage: false,
+            tests: currentPageTests,
+          });
+          currentPageTests = [];
+          currentRowCount = 0;
+          isFirst = false;
+          continue;
+        }
+
+        const effectiveCapacity = currentLimit - currentRowCount - 2; // reserve 2 units for title
+        const rowsToTake = Math.max(1, Math.min(remainingRows.length, effectiveCapacity));
+
+        const chunkRows = remainingRows.slice(0, rowsToTake);
+        remainingRows = remainingRows.slice(rowsToTake);
+
+        currentPageTests.push({
+          title: isFirstChunkOfTest ? test.title : `${test.title} (Continued)`,
+          isContinuation: !isFirstChunkOfTest,
+          comments: remainingRows.length === 0 ? test.comments : '',
+          cyclePhase: test.cyclePhase,
+          rows: chunkRows,
+        });
+
+        currentRowCount += chunkRows.length + 2;
+        isFirstChunkOfTest = false;
+
+        if (currentRowCount >= currentLimit && remainingRows.length > 0) {
+          pages.push({
+            pageNumber: pages.length + 1,
+            totalPages: 1,
+            isFirstPage: isFirst,
+            isLastPage: false,
+            tests: currentPageTests,
+          });
+          currentPageTests = [];
+          currentRowCount = 0;
+          isFirst = false;
+        }
+      }
+    }
+
+    if (currentPageTests.length > 0) {
+      pages.push({
+        pageNumber: pages.length + 1,
+        totalPages: 1,
+        isFirstPage: isFirst,
+        isLastPage: true,
+        tests: currentPageTests,
       });
+    }
 
-      return {
-        def,
-        state: st,
-        params: filledParams,
-      };
-    })
-    .filter((item): item is NonNullable<typeof item> => item !== null && item.params.length > 0);
+    const total = pages.length;
+    return pages.map((p, idx) => ({
+      ...p,
+      pageNumber: idx + 1,
+      totalPages: total,
+      isLastPage: idx === total - 1,
+    }));
+  }, [reportData]);
 
+  // ─────────────────────────────────────────────────────────────────────────────
+  // Action Handlers (Save, Print, Download)
+  // ─────────────────────────────────────────────────────────────────────────────
   const handleSave = () => {
     onSaveReport();
     setIsSaved(true);
+    showSuccess('Report saved successfully! Print and Download are now enabled.');
   };
 
   const handlePrint = () => {
     if (!isSaved) {
-      alert('Cannot print report: Please click "Save Report" first before printing.');
+      showWarning('Cannot print report: Please click "Save Report" first before printing.');
       return;
     }
     window.print();
@@ -90,7 +326,7 @@ export const Step4PreviewReport: React.FC<Step4PreviewReportProps> = ({
 
   const handleDownloadPDF = () => {
     if (!isSaved) {
-      alert('Cannot download report: Please click "Save Report" first before downloading.');
+      showWarning('Cannot download report: Please click "Save Report" first before downloading.');
       return;
     }
 
@@ -101,30 +337,65 @@ export const Step4PreviewReport: React.FC<Step4PreviewReportProps> = ({
       return;
     }
 
-    const patientName = (patient.name || 'Patient').trim().replace(/[^a-zA-Z0-9_-]/g, '_');
-    const fileName = `${patientName}_Lab_Report_${patient.sampleId || Date.now()}`;
+    const patientSafeName = (reportData.patient.name || 'Patient')
+      .trim()
+      .replace(/[^a-zA-Z0-9_-]/g, '_');
+    const fileName = `${patientSafeName}_Lab_Report_${reportData.patient.sampleId || Date.now()}`;
 
+    // Direct standalone HTML/PDF download trigger
     const triggerDirectDownload = () => {
       const fullHtml = `<!DOCTYPE html>
 <html lang="en">
 <head>
   <meta charset="UTF-8">
-  <title>${patient.name} - Laboratory Report</title>
+  <title>${reportData.patient.name} - Laboratory Report</title>
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <script src="https://cdn.tailwindcss.com"></script>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Figtree:wght@400;500;600;700;800&display=swap" rel="stylesheet">
   <style>
-    @media print {
-      body { margin: 0; padding: 0; background: #fff !important; }
-      @page { size: A4 portrait; margin: 8mm; }
+    @page { size: A4 portrait; margin: 0; }
+    html, body {
+      margin: 0 !important;
+      padding: 0 !important;
+      background: #f1f5f9;
+      font-family: 'Figtree', system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+      -webkit-print-color-adjust: exact !important;
+      print-color-adjust: exact !important;
     }
-    body { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif; background: #fff; margin: 0; padding: 10px; display: flex; justify-content: center; }
-    .report-wrap { width: 100%; max-width: 210mm; min-height: 297mm; background: #fff; }
+    @media print {
+      body { background: #fff !important; }
+      .a4-print-sheet {
+        margin: 0 auto !important;
+        box-shadow: none !important;
+        page-break-after: always;
+        break-after: page;
+      }
+      .a4-print-sheet:last-of-type {
+        page-break-after: avoid !important;
+        break-after: avoid !important;
+      }
+    }
+    .a4-print-sheet {
+      width: 210mm;
+      height: 297mm;
+      min-height: 297mm;
+      max-height: 297mm;
+      padding: 14mm 16mm;
+      box-sizing: border-box;
+      overflow: hidden;
+      background: #ffffff;
+      margin: 10px auto;
+      box-shadow: 0 4px 6px -1px rgba(0,0,0,0.1);
+      display: flex;
+      flex-direction: column;
+      justify-content: space-between;
+    }
+    .tabular-nums { font-variant-numeric: tabular-nums; }
   </style>
 </head>
 <body>
-  <div class="report-wrap">
-    ${element.innerHTML}
-  </div>
+  ${element.innerHTML}
 </body>
 </html>`;
 
@@ -138,34 +409,51 @@ export const Step4PreviewReport: React.FC<Step4PreviewReportProps> = ({
       document.body.removeChild(a);
       URL.revokeObjectURL(url);
       setIsDownloading(false);
+      showSuccess(`Laboratory report downloaded as "${fileName}.html"`);
     };
 
+    // If html2pdf library is present
     if ((window as any).html2pdf) {
       const opt = {
-        margin: [6, 6, 6, 6],
+        margin: [0, 0, 0, 0],
         filename: `${fileName}.pdf`,
         image: { type: 'jpeg', quality: 0.98 },
         html2canvas: { scale: 2, useCORS: true },
         jsPDF: { unit: 'mm', format: 'a4', orientation: 'portrait' },
       };
-      (window as any).html2pdf().from(element).set(opt).save()
-        .then(() => setIsDownloading(false))
+      (window as any)
+        .html2pdf()
+        .from(element)
+        .set(opt)
+        .save()
+        .then(() => {
+          setIsDownloading(false);
+          showSuccess(`Laboratory report downloaded as "${fileName}.pdf"`);
+        })
         .catch(() => triggerDirectDownload());
       return;
     }
 
+    // Dynamic load of html2pdf bundle
     const script = document.createElement('script');
     script.src = 'https://cdnjs.cloudflare.com/ajax/libs/html2pdf.js/0.10.1/html2pdf.bundle.min.js';
     script.onload = () => {
       const opt = {
-        margin: [6, 6, 6, 6],
+        margin: [0, 0, 0, 0],
         filename: `${fileName}.pdf`,
         image: { type: 'jpeg', quality: 0.98 },
         html2canvas: { scale: 2, useCORS: true },
         jsPDF: { unit: 'mm', format: 'a4', orientation: 'portrait' },
       };
-      (window as any).html2pdf().from(element).set(opt).save()
-        .then(() => setIsDownloading(false))
+      (window as any)
+        .html2pdf()
+        .from(element)
+        .set(opt)
+        .save()
+        .then(() => {
+          setIsDownloading(false);
+          showSuccess(`Laboratory report downloaded as "${fileName}.pdf"`);
+        })
         .catch(() => triggerDirectDownload());
     };
     script.onerror = () => {
@@ -174,340 +462,609 @@ export const Step4PreviewReport: React.FC<Step4PreviewReportProps> = ({
     document.head.appendChild(script);
   };
 
-  const isSingleTest = testsWithResults.length === 1;
-
   return (
     <div className="max-w-5xl mx-auto px-4 py-8 space-y-6">
-      {/* Top Action Bar (hidden in print) */}
-      <div className="no-print bg-white rounded-xl shadow-xs border border-slate-200 p-4 sm:p-5 flex flex-wrap items-center justify-between gap-4">
+      {/* ── TOP ACTION BAR (Hidden on print) ── */}
+      <div className="no-print bg-white rounded-2xl shadow-xs border border-slate-200/90 p-4 sm:p-5 flex flex-wrap items-center justify-between gap-4">
         <div>
-          <span className="text-xs font-semibold tracking-wider uppercase text-teal-700">Step 4 of 4</span>
-          <h2 className="text-xl font-bold text-slate-900 flex items-center gap-2">
-            <FileCheck2 className="w-5 h-5 text-teal-600" />
-            <span>Report Preview &amp; Actions</span>
+          <span className="text-[10px] font-extrabold tracking-wider uppercase text-teal-800 bg-teal-50 border border-teal-200 px-2.5 py-0.5 rounded-full">
+            Step 4 of 4 &bull; Final Report
+          </span>
+          <h2 className="text-lg sm:text-xl font-bold text-slate-900 flex items-center gap-2 mt-1">
+            <FileCheck2 className="w-5 h-5 text-teal-700" />
+            <span>Laboratory Report Preview &amp; Print</span>
           </h2>
           <p className="text-slate-500 text-xs mt-0.5">
-            A4 Print-Ready Document. Saving is required before downloading or printing.
+            A4 print-ready layout. Click &quot;Save Report&quot; first to enable instant download or printing.
           </p>
         </div>
 
-        {/* Buttons & Status Pill */}
+        {/* Action Buttons & Status Badge */}
         <div className="flex flex-wrap items-center gap-2.5">
-          {/* Status Indicator */}
           {!isSaved ? (
-            <span className="text-[11px] font-bold text-amber-800 bg-amber-50 border border-amber-300 px-3 py-1.5 rounded-lg flex items-center gap-1.5 shadow-2xs">
+            <span className="text-xs font-bold text-amber-800 bg-amber-50 border border-amber-300 px-3 py-1.5 rounded-full flex items-center gap-1.5 shadow-2xs">
               <span className="w-2 h-2 rounded-full bg-amber-500 animate-pulse" />
-              <span>Unsaved &bull; Save first to enable Download/Print</span>
+              <span>Unsaved &bull; Save first</span>
             </span>
           ) : (
-            <span className="text-[11px] font-bold text-emerald-800 bg-emerald-50 border border-emerald-300 px-3 py-1.5 rounded-lg flex items-center gap-1.5 shadow-2xs">
+            <span className="text-xs font-bold text-emerald-800 bg-emerald-50 border border-emerald-300 px-3 py-1.5 rounded-full flex items-center gap-1.5 shadow-2xs">
               <CheckCircle className="w-3.5 h-3.5 text-emerald-600" />
-              <span>Report Finalized &amp; Saved</span>
+              <span>Report Saved</span>
             </span>
           )}
 
           <button
             onClick={onEdit}
-            className="px-3.5 py-2 rounded-lg border border-slate-300 text-slate-700 hover:bg-slate-50 text-xs font-semibold flex items-center space-x-1.5 transition-colors cursor-pointer"
+            className="px-3.5 py-2 rounded-full border border-slate-300 text-slate-700 hover:bg-slate-50 text-xs font-semibold flex items-center space-x-1.5 transition-colors cursor-pointer"
           >
-            <Edit3 className="w-4 h-4 text-slate-500" />
+            <Edit3 className="w-3.5 h-3.5 text-slate-500" />
             <span>Edit Results</span>
           </button>
 
           <button
             onClick={handleSave}
-            className={`px-3.5 py-2 rounded-lg text-white text-xs font-semibold flex items-center space-x-1.5 transition-colors shadow-xs cursor-pointer ${
+            className={`px-4 py-2 rounded-full text-white text-xs font-bold flex items-center space-x-1.5 transition-all shadow-xs cursor-pointer ${
               isSaved
-                ? 'bg-emerald-700 hover:bg-emerald-800 ring-2 ring-emerald-300'
-                : 'bg-emerald-600 hover:bg-emerald-700 animate-pulse'
+                ? 'bg-emerald-700 hover:bg-emerald-800'
+                : 'bg-emerald-600 hover:bg-emerald-700 ring-2 ring-emerald-300 animate-pulse'
             }`}
           >
-            <Save className="w-4 h-4" />
+            <Save className="w-3.5 h-3.5" />
             <span>{isSaved ? 'Update Saved Report' : 'Save Report'}</span>
           </button>
 
           <button
             onClick={handleDownloadPDF}
             disabled={!isSaved || isDownloading}
-            className={`px-3.5 py-2 rounded-lg text-xs font-semibold flex items-center space-x-1.5 transition-all shadow-xs ${
+            className={`px-4 py-2 rounded-full text-xs font-bold flex items-center space-x-1.5 transition-all shadow-xs ${
               isSaved && !isDownloading
-                ? 'bg-teal-700 hover:bg-teal-800 text-white cursor-pointer'
+                ? 'bg-teal-700 hover:bg-teal-800 text-white cursor-pointer active:scale-95'
                 : 'bg-slate-200 text-slate-400 border border-slate-300 cursor-not-allowed opacity-60'
             }`}
             title={isSaved ? 'Automatically download report file' : 'Save report first to enable download'}
           >
-            <Download className="w-4 h-4" />
+            <Download className="w-3.5 h-3.5" />
             <span>{isDownloading ? 'Downloading...' : 'Download PDF'}</span>
           </button>
 
           <button
             onClick={handlePrint}
             disabled={!isSaved}
-            className={`px-4 py-2 rounded-lg text-xs font-bold flex items-center space-x-1.5 transition-all shadow-xs ${
+            className={`px-4 py-2 rounded-full text-xs font-bold flex items-center space-x-1.5 transition-all shadow-xs ${
               isSaved
-                ? 'bg-slate-900 hover:bg-black text-white cursor-pointer'
+                ? 'bg-slate-900 hover:bg-black text-white cursor-pointer active:scale-95'
                 : 'bg-slate-200 text-slate-400 border border-slate-300 cursor-not-allowed opacity-60'
             }`}
             title={isSaved ? 'Print report' : 'Save report first to enable printing'}
           >
-            <Printer className="w-4 h-4 text-teal-400" />
-            <span>Print Report</span>
+            <Printer className="w-3.5 h-3.5 text-teal-300" />
+            <span>Print</span>
           </button>
 
           <button
             onClick={onNewPatient}
-            className="px-3.5 py-2 rounded-lg border border-teal-600 text-teal-700 hover:bg-teal-50 text-xs font-semibold flex items-center space-x-1.5 transition-colors cursor-pointer"
+            className="px-3.5 py-2 rounded-full border border-teal-600 text-teal-800 hover:bg-teal-50 text-xs font-semibold flex items-center space-x-1.5 transition-colors cursor-pointer"
           >
-            <PlusCircle className="w-4 h-4" />
+            <PlusCircle className="w-3.5 h-3.5" />
             <span>New Patient</span>
           </button>
         </div>
       </div>
 
-      {/* A4 Sheet Container */}
-      <div className="bg-slate-200/70 p-2 sm:p-8 rounded-2xl flex justify-center overflow-x-auto no-print-bg">
-        <div
-          id="printable-report"
-          ref={printAreaRef}
-          className="bg-white text-black w-full max-w-[210mm] min-h-[297mm] p-8 sm:p-12 shadow-lg border border-slate-300 mx-auto font-sans leading-normal"
-          style={{ boxSizing: 'border-box' }}
-        >
-          {/* 1. FACILITY HEADER (Centered, on every report) */}
-          <div className="text-center space-y-0.5 pb-2">
-            {facilitySettings.logoUrl && (
-              <div className="flex justify-center mb-2">
-                <img
-                  src={facilitySettings.logoUrl}
-                  alt="Clinic Logo"
-                  className="h-16 max-w-xs object-contain"
-                />
-              </div>
-            )}
-            <h1 className="text-lg sm:text-xl font-bold tracking-tight text-black uppercase font-serif">
-              {facilitySettings.facilityName || 'CARE AND SOCIAL POLYCLINIC'}
-            </h1>
-            <p className="text-xs sm:text-sm font-medium text-black">
-              {facilitySettings.poBox || 'P. O. BOX 2425'}
-            </p>
-            <p className="text-xs sm:text-sm text-black">
-              {facilitySettings.address || 'ADJACENT PUMA FILLING STATION, MADINA ESTATE'}
-            </p>
-            <p className="text-xs sm:text-sm font-semibold text-black">
-              {facilitySettings.telephone || 'TEL: 053 197 6621'}
-            </p>
-            <p className="text-xs sm:text-sm font-bold tracking-widest text-black uppercase pt-0.5">
-              {facilitySettings.serviceTitle || 'LABORATORY SERVICE'}
-            </p>
-          </div>
+      {/* ── PRINTABLE A4 SHEETS CONTAINER (Screen grey background with soft shadow) ── */}
+      <div className="bg-slate-200/80 p-2 sm:p-8 rounded-2xl flex flex-col items-center gap-6 overflow-x-auto no-print-bg">
+        <div ref={printAreaRef} className="w-full flex flex-col items-center gap-8">
+          {sheets.map((sheet) => (
+            <div
+              key={`sheet-${sheet.pageNumber}`}
+              className="a4-print-sheet bg-white text-slate-900 shadow-xl border border-slate-300/80 mx-auto"
+              style={{
+                width: '210mm',
+                height: '297mm',
+                minHeight: '297mm',
+                maxHeight: '297mm',
+                padding: '14mm 16mm',
+                boxSizing: 'border-box',
+                overflow: 'hidden',
+                fontFamily: 'Figtree, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif',
+                display: 'flex',
+                flexDirection: 'column',
+                justifyContent: 'space-between',
+                color: '#0f172a',
+              }}
+            >
+              {/* TOP SECTION: Header, Title, Patient Block, Test Tables */}
+              <div>
+                {/* 1. HEADER */}
+                {sheet.isFirstPage ? (
+                  // Full Header on Page 1
+                  <div>
+                    <div className="flex items-start justify-between gap-4">
+                      {/* Left: Logo & Clinic Name */}
+                      <div className="flex items-center space-x-3">
+                        <img
+                          src={reportData.clinic.logo}
+                          alt="Clinic Logo"
+                          className="w-10 h-10 object-contain shrink-0 rounded-sm"
+                        />
+                        <div>
+                          <h1
+                            className="font-bold leading-tight uppercase"
+                            style={{ fontSize: '15pt', color: '#0f766e' }}
+                          >
+                            {reportData.clinic.name}
+                          </h1>
+                          <p
+                            className="font-semibold uppercase tracking-wider"
+                            style={{ fontSize: '8.5pt', color: '#64748b' }}
+                          >
+                            {reportData.clinic.servicesLine}
+                          </p>
+                        </div>
+                      </div>
 
-          {/* Horizontal Rule */}
-          <hr className="border-t-2 border-black my-3" />
-
-          {/* 2. PATIENT BLOCK (Two columns) */}
-          <div className="border border-black p-3 mb-4 text-xs sm:text-sm grid grid-cols-2 gap-x-6 gap-y-1">
-            {/* Left Column */}
-            <div className="space-y-1">
-              <div className="flex">
-                <span className="w-32 font-bold text-black uppercase">NAME:</span>
-                <span className="font-bold text-black uppercase flex-1">{patient.name || '-'}</span>
-              </div>
-              <div className="flex">
-                <span className="w-32 font-bold text-black uppercase">SEX:</span>
-                <span className="text-black uppercase flex-1">{patient.sex || '-'}</span>
-              </div>
-              <div className="flex">
-                <span className="w-32 font-bold text-black uppercase">AGE:</span>
-                <span className="text-black uppercase flex-1">{patient.age ? `${patient.age} YEARS` : '-'}</span>
-              </div>
-              <div className="flex">
-                <span className="w-32 font-bold text-black uppercase">COLLECTION DATE:</span>
-                <span className="text-black flex-1">{patient.sampleCollectionDate || '-'}</span>
-              </div>
-              <div className="flex">
-                <span className="w-32 font-bold text-black uppercase">RESULTS DATE:</span>
-                <span className="text-black flex-1">{patient.resultsDate || '-'}</span>
-              </div>
-            </div>
-
-            {/* Right Column */}
-            <div className="space-y-1">
-              <div className="flex">
-                <span className="w-32 font-bold text-black uppercase">SAMPLE ID:</span>
-                <span className="font-mono font-bold text-black flex-1">{patient.sampleId || '-'}</span>
-              </div>
-              <div className="flex">
-                <span className="w-32 font-bold text-black uppercase">SAMPLE TYPE:</span>
-                <span className="text-black uppercase flex-1">
-                  {patient.sampleType === 'Other' && patient.customSampleType
-                    ? patient.customSampleType
-                    : patient.sampleType}
-                </span>
-              </div>
-              <div className="flex">
-                <span className="w-32 font-bold text-black uppercase">RECEIPT NO:</span>
-                <span className="font-mono text-black flex-1">{patient.receiptNumber || '-'}</span>
-              </div>
-              <div className="flex">
-                <span className="w-32 font-bold text-black uppercase">TIME:</span>
-                <span className="text-black flex-1">{patient.collectionTime || '-'}</span>
-              </div>
-              <div className="flex">
-                <span className="w-32 font-bold text-black uppercase">REQUESTED BY:</span>
-                <span className="text-black flex-1 uppercase">{patient.requestedBy || '-'}</span>
-              </div>
-            </div>
-          </div>
-
-          {/* 3. LABORATORY REPORT HEADING */}
-          <div className="text-center my-3">
-            <h2 className="text-sm sm:text-base font-bold tracking-wider uppercase border-b-2 border-black inline-block pb-0.5">
-              LABORATORY REPORT
-            </h2>
-          </div>
-
-          {/* TEST TABLES */}
-          <div className="space-y-6">
-            {testsWithResults.length === 0 ? (
-              <div className="p-8 text-center text-slate-400 italic text-sm">
-                No test results have been entered yet. Click \"Edit Results\" above to enter values.
-              </div>
-            ) : (
-              testsWithResults.map(({ def, state, params }, testIndex) => {
-                // Sequential Test Numbering:
-                // If single test: show only title without number.
-                // If multiple tests: TEST 1, TEST 2, ...
-                const testHeading = isSingleTest
-                  ? def.name
-                  : `TEST ${testIndex + 1}: ${def.name}`;
-
-                const isUrine = def.layoutType === 'urine_re';
-                const isHormonal = def.id === 'hormonal';
-
-                return (
-                  <div key={def.id} className="avoid-break space-y-1.5 pt-1">
-                    {/* Test Title */}
-                    <div className="font-bold text-xs sm:text-sm text-black tracking-wide uppercase bg-slate-100 py-1 px-2 border-l-4 border-black">
-                      {testHeading}
+                      {/* Right: Address, PO Box, Phone */}
+                      <div
+                        className="text-right leading-tight"
+                        style={{ fontSize: '8.5pt', color: '#64748b' }}
+                      >
+                        <div>{reportData.clinic.address}</div>
+                        <div>{reportData.clinic.poBox}</div>
+                        <div>Tel: {reportData.clinic.phone}</div>
+                      </div>
                     </div>
 
-                    {/* Standard Table Layout */}
-                    <table className="w-full border border-black text-[11px] sm:text-xs">
-                      <thead>
-                        <tr className="bg-slate-50 border-b border-black font-bold text-black uppercase">
-                          <th className="py-1 px-2 text-left border-r border-black w-4/12">Parameter</th>
-                          <th className="py-1 px-2 text-left border-r border-black w-2/12">Result</th>
-                          <th className="py-1 px-2 text-left border-r border-black w-2/12">Unit</th>
-                          <th className="py-1 px-2 text-center border-r border-black w-1/12">Flag</th>
-                          <th className="py-1 px-2 text-left w-3/12">Reference Range</th>
-                        </tr>
-                      </thead>
-                      <tbody>
-                        {params.map((param) => {
-                          const val = state.results[param.id] || '';
-                          const flag = evaluateFlag(param, val, patient.sex);
-                          const isFlagged = flag === 'H' || flag === 'L' || flag === 'ABNORMAL';
-                          const displayRange = getDisplayReferenceRange(param, patient.sex);
+                    {/* 2px Teal Rule */}
+                    <div
+                      style={{
+                        height: '2px',
+                        backgroundColor: '#0f766e',
+                        marginTop: '3mm',
+                        marginBottom: '3mm',
+                      }}
+                    />
+                  </div>
+                ) : (
+                  // Compact Header on Page 2+
+                  <div>
+                    <div className="flex items-center justify-between pb-1">
+                      <div className="flex items-center space-x-2">
+                        <img
+                          src={reportData.clinic.logo}
+                          alt="Clinic Logo"
+                          className="w-6 h-6 object-contain shrink-0"
+                        />
+                        <span
+                          className="font-bold uppercase"
+                          style={{ fontSize: '11pt', color: '#0f766e' }}
+                        >
+                          {reportData.clinic.name}
+                        </span>
+                        <span style={{ fontSize: '8.5pt', color: '#64748b' }}>
+                          &bull; Laboratory Report (Continued)
+                        </span>
+                      </div>
+                      <div
+                        className="text-right font-medium"
+                        style={{ fontSize: '8.5pt', color: '#64748b' }}
+                      >
+                        <span>Patient: <strong style={{ color: '#0f172a' }}>{reportData.patient.name}</strong></span>
+                        <span className="mx-2">&bull;</span>
+                        <span>Sample ID: <strong style={{ color: '#0f172a' }}>{reportData.patient.sampleId}</strong></span>
+                      </div>
+                    </div>
+                    {/* 2px Teal Rule */}
+                    <div
+                      style={{
+                        height: '2px',
+                        backgroundColor: '#0f766e',
+                        marginTop: '1.5mm',
+                        marginBottom: '3mm',
+                      }}
+                    />
+                  </div>
+                )}
 
-                          return (
+                {/* 2. TITLE: "Laboratory report" (Page 1 only) */}
+                {sheet.isFirstPage && (
+                  <div style={{ marginBottom: '3mm' }}>
+                    <h2
+                      className="font-bold tracking-tight"
+                      style={{ fontSize: '13pt', color: '#0f172a' }}
+                    >
+                      Laboratory report
+                    </h2>
+                  </div>
+                )}
+
+                {/* 3. PATIENT BLOCK (Page 1 only, 2-column grid, light grey rounded box) */}
+                {sheet.isFirstPage && (
+                  <div
+                    style={{
+                      backgroundColor: '#f8fafc',
+                      border: '1px solid #e2e8f0',
+                      borderRadius: '6px',
+                      padding: '3mm 4mm',
+                      marginBottom: '4mm',
+                    }}
+                  >
+                    <div className="grid grid-cols-2 gap-x-8 gap-y-2">
+                      {/* Left Column: Patient, Sex / Age, Collected, Reported */}
+                      <div className="space-y-2">
+                        <div>
+                          <div style={{ fontSize: '8.5pt', color: '#64748b', lineHeight: 1 }}>
+                            Patient
+                          </div>
+                          <div
+                            className="font-bold uppercase tracking-tight"
+                            style={{ fontSize: '10pt', color: '#0f172a', lineHeight: 1.25 }}
+                          >
+                            {reportData.patient.name}
+                          </div>
+                        </div>
+
+                        <div>
+                          <div style={{ fontSize: '8.5pt', color: '#64748b', lineHeight: 1 }}>
+                            Sex / Age
+                          </div>
+                          <div
+                            className="font-bold"
+                            style={{ fontSize: '10pt', color: '#0f172a', lineHeight: 1.25 }}
+                          >
+                            {reportData.patient.sex} / {reportData.patient.age}
+                          </div>
+                        </div>
+
+                        <div>
+                          <div style={{ fontSize: '8.5pt', color: '#64748b', lineHeight: 1 }}>
+                            Collected
+                          </div>
+                          <div
+                            className="font-bold"
+                            style={{ fontSize: '10pt', color: '#0f172a', lineHeight: 1.25 }}
+                          >
+                            {reportData.patient.collectionDate}{' '}
+                            <span style={{ fontSize: '8.5pt', color: '#64748b', fontWeight: 500 }}>
+                              {reportData.patient.collectionTime}
+                            </span>
+                          </div>
+                        </div>
+
+                        <div>
+                          <div style={{ fontSize: '8.5pt', color: '#64748b', lineHeight: 1 }}>
+                            Reported
+                          </div>
+                          <div
+                            className="font-bold"
+                            style={{ fontSize: '10pt', color: '#0f172a', lineHeight: 1.25 }}
+                          >
+                            {reportData.patient.reportDate}
+                          </div>
+                        </div>
+                      </div>
+
+                      {/* Right Column: Sample ID, Sample type, Receipt no., Requested by */}
+                      <div className="space-y-2">
+                        <div>
+                          <div style={{ fontSize: '8.5pt', color: '#64748b', lineHeight: 1 }}>
+                            Sample ID
+                          </div>
+                          <div
+                            className="font-bold"
+                            style={{ fontSize: '10pt', color: '#0f172a', lineHeight: 1.25 }}
+                          >
+                            {reportData.patient.sampleId}
+                          </div>
+                        </div>
+
+                        <div>
+                          <div style={{ fontSize: '8.5pt', color: '#64748b', lineHeight: 1 }}>
+                            Sample type
+                          </div>
+                          <div
+                            className="font-bold"
+                            style={{ fontSize: '10pt', color: '#0f172a', lineHeight: 1.25 }}
+                          >
+                            {reportData.patient.sampleType}
+                          </div>
+                        </div>
+
+                        <div>
+                          <div style={{ fontSize: '8.5pt', color: '#64748b', lineHeight: 1 }}>
+                            Receipt no.
+                          </div>
+                          <div
+                            className="font-bold"
+                            style={{ fontSize: '10pt', color: '#0f172a', lineHeight: 1.25 }}
+                          >
+                            {reportData.patient.receiptNumber}
+                          </div>
+                        </div>
+
+                        <div>
+                          <div style={{ fontSize: '8.5pt', color: '#64748b', lineHeight: 1 }}>
+                            Requested by
+                          </div>
+                          <div
+                            className="font-bold"
+                            style={{ fontSize: '10pt', color: '#0f172a', lineHeight: 1.25 }}
+                          >
+                            {reportData.patient.requestedBy}
+                          </div>
+                        </div>
+                      </div>
+                    </div>
+                  </div>
+                )}
+
+                {/* 4. TEST TABLES */}
+                <div className="space-y-3">
+                  {sheet.tests.length === 0 ? (
+                    <div
+                      className="py-12 text-center italic"
+                      style={{ fontSize: '10pt', color: '#64748b' }}
+                    >
+                      No lab results entered yet. Click &quot;Edit Results&quot; to enter findings.
+                    </div>
+                  ) : (
+                    sheet.tests.map((test, tIdx) => (
+                      <div key={`${test.title}-${tIdx}`} className="space-y-1">
+                        {/* Section Title */}
+                        <div
+                          className="font-bold test-title-heading"
+                          style={{
+                            fontSize: '12pt',
+                            color: '#0f766e',
+                            marginTop: tIdx === 0 ? '0' : '3mm',
+                            marginBottom: '1.5mm',
+                            pageBreakAfter: 'avoid',
+                            breakAfter: 'avoid',
+                          }}
+                        >
+                          {test.title}
+                        </div>
+
+                        {/* Parameter Table */}
+                        <table
+                          className="w-full text-left"
+                          style={{
+                            borderCollapse: 'collapse',
+                            fontSize: '10pt',
+                            width: '100%',
+                          }}
+                        >
+                          <thead>
                             <tr
-                              key={param.id}
-                              className={`border-b border-black/30 ${isFlagged ? 'print-bold font-bold bg-slate-50' : ''
-                                }`}
+                              style={{
+                                backgroundColor: '#f8fafc',
+                                borderBottom: '1px solid #e2e8f0',
+                                color: '#64748b',
+                                fontSize: '8.5pt',
+                                fontWeight: 600,
+                              }}
                             >
-                              <td className="py-1 px-2 border-r border-black/30">
-                                <span>{param.name}</span>
-                                {param.subCategory && (
-                                  <span className="text-[9px] text-slate-500 ml-1">
-                                    ({param.subCategory})
-                                  </span>
-                                )}
-                              </td>
-                              <td
-                                className={`py-1 px-2 border-r border-black/30 ${flag === 'H'
-                                  ? 'text-red-700 print-black print-bold font-bold'
-                                  : flag === 'L'
-                                    ? 'text-blue-700 print-black print-bold font-bold'
-                                    : flag === 'ABNORMAL'
-                                      ? 'text-rose-700 print-black print-bold font-bold'
-                                      : ''
-                                  }`}
-                              >
-                                {val}
-                              </td>
-                              <td className="py-1 px-2 border-r border-black/30 font-mono text-[10px]">
-                                {param.unit || '-'}
-                              </td>
-                              <td className="py-1 px-2 border-r border-black/30 text-center">
-                                {flag === 'H' && (
-                                  <span className="font-black text-red-700 print-black print-bold">H</span>
-                                )}
-                                {flag === 'L' && (
-                                  <span className="font-black text-blue-700 print-black print-bold">L</span>
-                                )}
-                                {flag === 'ABNORMAL' && (
-                                  <span className="font-black text-rose-700 print-black print-bold">*</span>
-                                )}
-                                {flag === null && ''}
-                              </td>
-                              <td className="py-1 px-2 text-[10px] sm:text-[11px] text-slate-800">
-                                {displayRange}
-                              </td>
+                              <th style={{ padding: '4px 6px', textAlign: 'left', width: '38%' }}>
+                                Parameter
+                              </th>
+                              <th style={{ padding: '4px 6px', textAlign: 'right', width: '18%' }}>
+                                Result
+                              </th>
+                              <th style={{ padding: '4px 6px', textAlign: 'left', width: '16%' }}>
+                                Unit
+                              </th>
+                              <th style={{ padding: '4px 6px', textAlign: 'left', width: '22%' }}>
+                                Reference range
+                              </th>
+                              <th style={{ padding: '4px 4px', textAlign: 'center', width: '6%' }}>
+                                Flag
+                              </th>
                             </tr>
-                          );
-                        })}
-                      </tbody>
-                    </table>
+                          </thead>
+                          <tbody>
+                            {test.rows.map((row, rIdx) => {
+                              const isAbnormal = row.isAbnormal;
 
-                    {/* Hormonal Cycle phase / note printed below table */}
-                    {isHormonal && state.cyclePhase && state.cyclePhase !== 'None' && (
-                      <p className="text-[11px] text-black italic px-1">
-                        <strong>Cycle phase / note:</strong> {state.cyclePhase} phase
-                      </p>
-                    )}
+                              return (
+                                <tr
+                                  key={`${row.parameter}-${rIdx}`}
+                                  style={{
+                                    borderBottom: '1px solid #e2e8f0',
+                                    backgroundColor: isAbnormal ? '#fef2f2' : 'transparent',
+                                    color: isAbnormal ? '#dc2626' : '#0f172a',
+                                    fontWeight: isAbnormal ? 700 : 400,
+                                    borderLeft: isAbnormal ? '3px solid #dc2626' : '3px solid transparent',
+                                    pageBreakInside: 'avoid',
+                                    breakInside: 'avoid',
+                                  }}
+                                >
+                                  {/* Parameter */}
+                                  <td
+                                    style={{
+                                      padding: '4px 6px',
+                                      fontSize: '9.5pt',
+                                    }}
+                                  >
+                                    {row.parameter}
+                                  </td>
 
-                    {/* Test Specific Comments */}
-                    {state.comments && state.comments.trim() !== '' && (
-                      <div className="text-[11px] text-black px-1 pt-0.5">
-                        <span className="font-bold">Comments: </span>
-                        <span>{state.comments}</span>
+                                  {/* Result (right-aligned, tabular numbers) */}
+                                  <td
+                                    className="tabular-nums"
+                                    style={{
+                                      padding: '4px 6px',
+                                      textAlign: 'right',
+                                      fontSize: '10pt',
+                                      fontVariantNumeric: 'tabular-nums',
+                                    }}
+                                  >
+                                    {row.result}
+                                  </td>
+
+                                  {/* Unit */}
+                                  <td
+                                    style={{
+                                      padding: '4px 6px',
+                                      fontSize: '8.5pt',
+                                      color: isAbnormal ? '#dc2626' : '#64748b',
+                                      fontWeight: 500,
+                                    }}
+                                  >
+                                    {row.unit || '-'}
+                                  </td>
+
+                                  {/* Reference Range (same weight in every table) */}
+                                  <td
+                                    style={{
+                                      padding: '4px 6px',
+                                      fontSize: '8.5pt',
+                                      color: '#64748b',
+                                      fontWeight: 500,
+                                    }}
+                                  >
+                                    {row.refText}
+                                  </td>
+
+                                  {/* Flag Badge */}
+                                  <td
+                                    style={{
+                                      padding: '4px 2px',
+                                      textAlign: 'center',
+                                    }}
+                                  >
+                                    {isAbnormal && row.flag && (
+                                      <span
+                                        style={{
+                                          display: 'inline-flex',
+                                          alignItems: 'center',
+                                          justifyContent: 'center',
+                                          width: '16px',
+                                          height: '16px',
+                                          borderRadius: '9999px',
+                                          backgroundColor: '#fee2e2',
+                                          color: '#dc2626',
+                                          border: '1px solid #fca5a5',
+                                          fontSize: '7.5pt',
+                                          fontWeight: 800,
+                                          lineHeight: 1,
+                                        }}
+                                      >
+                                        {row.flag === 'ABNORMAL' ? '*' : row.flag}
+                                      </span>
+                                    )}
+                                  </td>
+                                </tr>
+                              );
+                            })}
+                          </tbody>
+                        </table>
+
+                        {/* Optional cycle phase or comments */}
+                        {test.cyclePhase && test.cyclePhase !== 'None' && (
+                          <div
+                            style={{
+                              fontSize: '8.5pt',
+                              color: '#64748b',
+                              fontStyle: 'italic',
+                              padding: '2px 4px',
+                            }}
+                          >
+                            Cycle phase: {test.cyclePhase}
+                          </div>
+                        )}
+                        {test.comments && (
+                          <div
+                            style={{
+                              fontSize: '8.5pt',
+                              color: '#334155',
+                              padding: '2px 4px',
+                            }}
+                          >
+                            <span className="font-bold">Comments:</span> {test.comments}
+                          </div>
+                        )}
+                      </div>
+                    ))
+                  )}
+                </div>
+              </div>
+
+              {/* BOTTOM SECTION: End of Report, Footer (Printed, Legend, Signature) */}
+              <div>
+                {/* 6. "End of report" centred, small and grey (Last page only) */}
+                {sheet.isLastPage && (
+                  <div
+                    className="text-center"
+                    style={{
+                      fontSize: '8.5pt',
+                      color: '#94a3b8',
+                      letterSpacing: '0.08em',
+                      textTransform: 'uppercase',
+                      marginTop: '4mm',
+                      marginBottom: '3mm',
+                    }}
+                  >
+                    *** End of report ***
+                  </div>
+                )}
+
+                {/* 7. FOOTER */}
+                <div
+                  style={{
+                    borderTop: '1px solid #e2e8f0',
+                    paddingTop: '3mm',
+                    display: 'flex',
+                    alignItems: 'flex-end',
+                    justifyContent: 'space-between',
+                  }}
+                >
+                  {/* Left: Printed timestamp, Legend, Page Number */}
+                  <div style={{ fontSize: '8.5pt', color: '#64748b', lineHeight: 1.4 }}>
+                    <div>Printed {reportData.printedAt}</div>
+                    <div style={{ fontSize: '8pt', color: '#94a3b8' }}>
+                      H = above reference range, L = below reference range
+                    </div>
+                    <div style={{ fontSize: '8.5pt', fontWeight: 600, color: '#475569', marginTop: '1mm' }}>
+                      Page {sheet.pageNumber} of {sheet.totalPages}
+                    </div>
+                  </div>
+
+                  {/* Right: Signature Block (Last page only) */}
+                  <div className="text-right">
+                    {sheet.isLastPage ? (
+                      <div style={{ display: 'inline-block', textAlign: 'center', width: '190px' }}>
+                        {/* Space for handwritten signature */}
+                        <div style={{ height: '22px' }} />
+                        {/* Dark line */}
+                        <div style={{ borderBottom: '1px solid #334155', width: '100%', marginBottom: '4px' }} />
+                        <div
+                          className="font-bold uppercase"
+                          style={{ fontSize: '10pt', color: '#0f172a', lineHeight: 1.2 }}
+                        >
+                          {reportData.scientist.name}
+                        </div>
+                        <div
+                          style={{
+                            fontSize: '8.5pt',
+                            color: '#64748b',
+                            lineHeight: 1.2,
+                          }}
+                        >
+                          {reportData.scientist.title}
+                        </div>
+                      </div>
+                    ) : (
+                      <div
+                        className="italic font-medium"
+                        style={{ fontSize: '8.5pt', color: '#64748b' }}
+                      >
+                        [Continued on Page {sheet.pageNumber + 1}...]
                       </div>
                     )}
                   </div>
-                );
-              })
-            )}
-          </div>
-
-          {/* 4. END OF REPORT */}
-          <div className="text-center my-6 pt-4">
-            <span className="font-bold italic text-xs tracking-widest uppercase">
-              *** END OF REPORT ***
-            </span>
-          </div>
-
-          {/* 5. FOOTER (Date Printed & Signature) */}
-          <div className="avoid-break pt-4 mt-6 border-t border-black text-xs grid grid-cols-2 gap-4 items-end">
-            {/* Left: Date Printed */}
-            <div>
-              <p className="font-bold text-black uppercase">DATE PRINTED:</p>
-              <p className="font-mono text-slate-800 text-[11px]">{formattedPrintDate}</p>
-            </div>
-
-            {/* Right: Signature line */}
-            <div className="text-right space-y-1">
-              <div className="inline-block text-center w-56">
-                <div className="border-b border-black mb-1 h-8 flex items-end justify-center">
-                  {/* Signature line space */}
                 </div>
-                <p className="font-bold text-black uppercase text-xs">
-                  {facilitySettings.scientistName || 'KWAME MENSAH, MLS'}
-                </p>
-                <p className="text-[11px] text-black italic">
-                  {facilitySettings.scientistTitle || 'Lab Scientist'}
-                </p>
               </div>
             </div>
-          </div>
+          ))}
         </div>
       </div>
     </div>

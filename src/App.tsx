@@ -54,7 +54,7 @@ const getInitialPatient = (): PatientDetails => {
 };
 
 export const App: React.FC = () => {
-  const { showSuccess, showInfo, askConfirm } = useToast();
+  const { showSuccess, showInfo, showWarning, askConfirm } = useToast();
 
   // Authentication & Current User State (null = show Login Portal)
   const [users, setUsersState] = useState<UserAccount[]>(loadUsers);
@@ -231,11 +231,38 @@ export const App: React.FC = () => {
     setCatalogState(updated);
   };
 
+  const areAllResultsFilled = (tests: SelectedTestState[], cat: LabTest[]): boolean => {
+    if (!tests || tests.length === 0) return false;
+    let totalParamCount = 0;
+    for (const st of tests) {
+      const def = cat.find((c) => c.id === st.testId);
+      if (!def) return false;
+      const activeIds = st.selectedParameterIds || [];
+      if (activeIds.length === 0) continue;
+      for (const pid of activeIds) {
+        totalParamCount++;
+        const val = st.results ? st.results[pid] : undefined;
+        if (val === undefined || val === null || val.trim() === '') {
+          return false;
+        }
+      }
+    }
+    return totalParamCount > 0;
+  };
+
   const canNavigateToStep = (step: number): boolean => {
     if (step === 1) return true;
-    if (step === 2) return patient.name.trim().length > 0;
-    if (step === 3) return patient.name.trim().length > 0 && selectedTests.length > 0;
-    if (step === 4) return patient.name.trim().length > 0 && selectedTests.length > 0;
+    const step1Valid = patient.name.trim().length > 0 && patient.age.trim().length > 0;
+    if (step === 2) return step1Valid;
+
+    const hasSelectedTests =
+      selectedTests.length > 0 && selectedTests.some((st) => st.selectedParameterIds.length > 0);
+    const step2Valid = step1Valid && hasSelectedTests;
+    if (step === 3) return step2Valid;
+
+    const step3Valid = step2Valid && areAllResultsFilled(selectedTests, catalog);
+    if (step === 4) return step3Valid;
+
     return false;
   };
 
@@ -489,6 +516,10 @@ export const App: React.FC = () => {
                     handleAutoSavePending(patient, updated, false);
                   }}
                   onNext={() => {
+                    if (!areAllResultsFilled(selectedTests, catalog)) {
+                      showWarning('Please enter results for all selected laboratory parameters before proceeding to Preview & Print.');
+                      return;
+                    }
                     handleAutoSavePending(patient, selectedTests, false);
                     setCurrentStep(4);
                   }}

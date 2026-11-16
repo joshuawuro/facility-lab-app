@@ -3,8 +3,9 @@
 @tailwind utilities;
 
 @layer base {
-  body {
+  html, body {
     @apply bg-slate-100 text-slate-800 antialiased;
+    font-family: 'Figtree', system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
     font-feature-settings: "cv02", "cv03", "cv04", "cv11";
   }
 }
@@ -13,19 +14,21 @@
 @media print {
   @page {
     size: A4 portrait;
-    margin: 12mm 15mm;
+    margin: 0;
   }
 
-  body {
+  html, body {
     background: #ffffff !important;
-    color: #000000 !important;
-    font-size: 11pt;
+    color: #0f172a !important;
+    font-size: 10pt;
     line-height: 1.35;
     margin: 0 !important;
     padding: 0 !important;
+    -webkit-print-color-adjust: exact !important;
+    print-color-adjust: exact !important;
   }
 
-  /* Hide everything not in the printable report container */
+  /* Hide everything not part of the printable document */
   .no-print,
   nav,
   header,
@@ -37,38 +40,55 @@
     display: none !important;
   }
 
-  /* Unhide the report container */
-  #printable-report {
-    display: block !important;
-    width: 100% !important;
-    margin: 0 !important;
+  .no-print-bg {
+    background: transparent !important;
     padding: 0 !important;
+    margin: 0 !important;
+    box-shadow: none !important;
+  }
+
+  /* Sheet styling for A4 Print */
+  .a4-print-sheet {
+    display: flex !important;
+    flex-direction: column !important;
+    justify-content: space-between !important;
+    width: 210mm !important;
+    height: 297mm !important;
+    min-height: 297mm !important;
+    max-height: 297mm !important;
+    padding: 14mm 16mm !important;
+    box-sizing: border-box !important;
+    overflow: hidden !important;
     background: #ffffff !important;
     box-shadow: none !important;
     border: none !important;
+    margin: 0 auto !important;
+    break-after: page;
+    page-break-after: always;
   }
 
-  /* Avoid page breaks inside test tables or blocks */
-  .avoid-break {
+  .a4-print-sheet:last-child,
+  .a4-print-sheet:last-of-type {
+    break-after: avoid !important;
+    page-break-after: avoid !important;
+  }
+
+  thead {
+    display: table-header-group;
+  }
+
+  tr {
     break-inside: avoid !important;
     page-break-inside: avoid !important;
   }
 
-  /* Ensure high contrast for black-and-white print */
-  .print-bold {
-    font-weight: 700 !important;
-  }
-
-  .print-black {
-    color: #000000 !important;
+  .test-title-heading {
+    break-after: avoid !important;
+    page-break-after: avoid !important;
   }
 
   table {
     border-collapse: collapse !important;
     width: 100% !important;
-  }
-
-  th, td {
-    border-color: #333333 !important;
   }
 }

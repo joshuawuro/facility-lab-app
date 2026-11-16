@@ -86,6 +86,10 @@ export const Step1Patient: React.FC<Step1PatientProps> = ({ patient, facilitySet
       showWarning('Please enter the patient full name before continuing.');
       return;
     }
+    if (!patient.age || !patient.age.trim()) {
+      showWarning('Please enter the patient age before continuing.');
+      return;
+    }
     onNext();
   };
 
