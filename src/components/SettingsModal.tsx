@@ -491,21 +491,46 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
           )}
 
           <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 pb-4 border-b border-slate-200 dark:border-slate-800">
-            <div className="flex items-center space-x-3">
-              <label className="text-xs font-bold text-slate-600 dark:text-slate-400 uppercase tracking-wider">
-                Select Test:
-              </label>
-              <select
-                value={selectedTestId}
-                onChange={(e) => setSelectedTestId(e.target.value)}
-                className="px-3 py-1.5 bg-slate-50 dark:bg-slate-800 border border-slate-300 dark:border-slate-700 rounded-lg text-xs sm:text-sm font-bold text-slate-900 dark:text-white focus:outline-none focus:border-teal-600"
-              >
-                {localCatalog.map((t) => (
-                  <option key={t.id} value={t.id}>
-                    {t.name}
-                  </option>
-                ))}
-              </select>
+            <div className="flex flex-wrap items-center gap-3">
+              <div className="flex items-center space-x-2">
+                <label className="text-xs font-bold text-slate-600 dark:text-slate-400 uppercase tracking-wider">
+                  Select Test:
+                </label>
+                <select
+                  value={selectedTestId}
+                  onChange={(e) => setSelectedTestId(e.target.value)}
+                  className="px-3 py-1.5 bg-slate-50 dark:bg-slate-800 border border-slate-300 dark:border-slate-700 rounded-lg text-xs sm:text-sm font-bold text-slate-900 dark:text-white focus:outline-none focus:border-teal-600"
+                >
+                  {localCatalog.map((t) => (
+                    <option key={t.id} value={t.id}>
+                      {t.name}
+                    </option>
+                  ))}
+                </select>
+              </div>
+
+              <div className="flex items-center space-x-1.5 bg-slate-50 dark:bg-slate-800 px-3 py-1 rounded-lg border border-slate-300 dark:border-slate-700">
+                <span className="text-[11px] font-bold text-slate-600 dark:text-slate-400 uppercase tracking-wider">
+                  Price (GH₵):
+                </span>
+                <input
+                  type="number"
+                  step="0.01"
+                  min="0"
+                  value={currentTestDef.priceCents !== undefined ? (currentTestDef.priceCents / 100) : ''}
+                  onChange={(e) => {
+                    const val = parseFloat(e.target.value);
+                    const cents = isNaN(val) ? 0 : Math.round(val * 100);
+                    const updated = localCatalog.map((t) =>
+                      t.id === currentTestDef.id ? { ...t, priceCents: cents } : t
+                    );
+                    setLocalCatalog(updated);
+                    onSaveCatalog(updated);
+                  }}
+                  className="w-20 px-2 py-0.5 rounded text-xs font-bold text-emerald-700 dark:text-emerald-400 bg-white dark:bg-slate-900 border border-slate-300 dark:border-slate-600"
+                  placeholder="0.00"
+                />
+              </div>
             </div>
 
             <div className="flex items-center space-x-2">

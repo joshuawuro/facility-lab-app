@@ -114,7 +114,7 @@ export const App: React.FC = () => {
 
     const scientistUsername = currentUser?.username || 'Dorean';
     const scientistName = currentUser?.displayName || 'Dorean';
-    const scientistTitle = currentUser?.title || 'Medical Laboratory Scientist, MLS (AHPC)';
+    const scientistTitle = currentUser?.title || 'Medical Laboratory Scientist';
 
     const existing = recentReports.find((r) => r.id === currentReportId);
 
@@ -127,7 +127,10 @@ export const App: React.FC = () => {
       performedByName: scientistName,
       performedByTitle: scientistTitle,
       patient: currentPatient,
-      selectedTests: currentTests,
+      selectedTests: (currentTests || []).map((st) => ({
+        ...st,
+        priceCents: st.priceCents ?? catalog.find((c) => c.id === st.testId)?.priceCents ?? 0,
+      })),
       facilitySettings,
     };
 
@@ -268,7 +271,7 @@ export const App: React.FC = () => {
   const handleSaveCurrentReport = () => {
     const scientistUsername = currentUser?.username || 'Dorean';
     const scientistName = currentUser?.displayName || 'Dorean';
-    const scientistTitle = currentUser?.title || 'Medical Laboratory Scientist, MLS (AHPC)';
+    const scientistTitle = currentUser?.title || 'Medical Laboratory Scientist';
 
     const existing = recentReports.find((r) => r.id === currentReportId);
 
@@ -281,7 +284,10 @@ export const App: React.FC = () => {
       performedByName: scientistName,
       performedByTitle: scientistTitle,
       patient,
-      selectedTests,
+      selectedTests: (selectedTests || []).map((st) => ({
+        ...st,
+        priceCents: st.priceCents ?? catalog.find((c) => c.id === st.testId)?.priceCents ?? 0,
+      })),
       facilitySettings,
     };
     const updated = saveReport(report);

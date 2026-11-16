@@ -9,7 +9,7 @@ import {
   Building2,
   FileCheck2,
 } from 'lucide-react';
-import { LabTest, SelectedTestState, PatientDetails, FacilitySettings } from '../types';
+import { LabTest, SelectedTestState, PatientDetails, FacilitySettings, UserAccount } from '../types';
 import { evaluateFlag, getDisplayReferenceRange } from '../utils/flagging';
 
 interface Step4PreviewReportProps {
@@ -17,6 +17,7 @@ interface Step4PreviewReportProps {
   selectedTests: SelectedTestState[];
   patient: PatientDetails;
   facilitySettings: FacilitySettings;
+  currentUser?: UserAccount;
   onEdit: () => void;
   onSaveReport: () => void;
   onNewPatient: () => void;
@@ -27,6 +28,7 @@ export const Step4PreviewReport: React.FC<Step4PreviewReportProps> = ({
   selectedTests,
   patient,
   facilitySettings,
+  currentUser,
   onEdit,
   onSaveReport,
   onNewPatient,
@@ -285,9 +287,8 @@ export const Step4PreviewReport: React.FC<Step4PreviewReportProps> = ({
                           return (
                             <tr
                               key={param.id}
-                              className={`border-b border-black/30 ${
-                                isFlagged ? 'print-bold font-bold bg-slate-50' : ''
-                              }`}
+                              className={`border-b border-black/30 ${isFlagged ? 'print-bold font-bold bg-slate-50' : ''
+                                }`}
                             >
                               <td className="py-1 px-2 border-r border-black/30">
                                 <span>{param.name}</span>
@@ -298,15 +299,14 @@ export const Step4PreviewReport: React.FC<Step4PreviewReportProps> = ({
                                 )}
                               </td>
                               <td
-                                className={`py-1 px-2 border-r border-black/30 ${
-                                  flag === 'H'
-                                    ? 'text-red-700 print-black print-bold font-bold'
-                                    : flag === 'L'
+                                className={`py-1 px-2 border-r border-black/30 ${flag === 'H'
+                                  ? 'text-red-700 print-black print-bold font-bold'
+                                  : flag === 'L'
                                     ? 'text-blue-700 print-black print-bold font-bold'
                                     : flag === 'ABNORMAL'
-                                    ? 'text-rose-700 print-black print-bold font-bold'
-                                    : ''
-                                }`}
+                                      ? 'text-rose-700 print-black print-bold font-bold'
+                                      : ''
+                                  }`}
                               >
                                 {val}
                               </td>
@@ -376,7 +376,7 @@ export const Step4PreviewReport: React.FC<Step4PreviewReportProps> = ({
                   {/* Signature line space */}
                 </div>
                 <p className="font-bold text-black uppercase text-xs">
-                  {facilitySettings.scientistName || 'KWAME MENSAH, MLS (AHPC)'}
+                  {facilitySettings.scientistName || 'KWAME MENSAH, MLS'}
                 </p>
                 <p className="text-[11px] text-black italic">
                   {facilitySettings.scientistTitle || 'Lab Scientist'}

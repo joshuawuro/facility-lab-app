@@ -390,7 +390,7 @@ export const Step1Patient: React.FC<Step1PatientProps> = ({ patient, onChange, o
                     Specimen Intake Registry
                   </div>
                   <div className="text-[9px] font-medium text-teal-200">
-                    AHPC Clinical Range Verification
+                    Clinical Range Verification
                   </div>
                 </div>
               </div>

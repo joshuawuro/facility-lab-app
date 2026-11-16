@@ -442,6 +442,11 @@ export const Step2SelectTests: React.FC<Step2SelectTestsProps> = ({
                             <span className="font-extrabold text-sm sm:text-base text-slate-900">
                               {test.name}
                             </span>
+                            {test.priceCents !== undefined && (
+                              <span className="px-2 py-0.5 rounded-full text-[10px] font-extrabold bg-emerald-50 text-emerald-700 border border-emerald-200">
+                                {test.priceCents === 0 ? 'FREE' : `GH₵ ${(test.priceCents / 100).toFixed(2)}`}
+                              </span>
+                            )}
                             {test.isCustom && (
                               <span className="px-2 py-0.5 rounded-full text-[9px] font-black uppercase bg-purple-100 text-purple-700">
                                 Custom

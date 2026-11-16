@@ -4,7 +4,7 @@ import { DUMMY_ARCHIVED_REPORTS } from '../data/sampleData';
 
 const SETTINGS_KEY = 'facility_lab_settings_v1';
 const CATALOG_KEY = 'facility_lab_catalog_v1';
-const REPORTS_KEY = 'facility_lab_reports_v1';
+const REPORTS_KEY = 'facility_lab_reports_v4';
 const USERS_KEY = 'facility_lab_users_v1';
 const CURRENT_USER_KEY = 'facility_lab_current_user_v1';
 const THEME_KEY = 'facility_lab_theme_v1';
@@ -15,14 +15,14 @@ export const DEFAULT_USERS: UserAccount[] = [
     password: 'password',
     displayName: 'Dorean',
     role: 'scientist',
-    title: 'Medical Laboratory Scientist, MLS (AHPC)',
+    title: 'Medical Laboratory Scientist',
   },
   {
     username: 'Hawa',
     password: 'password',
     displayName: 'Hawa',
     role: 'scientist',
-    title: 'Medical Laboratory Scientist, MLS (AHPC)',
+    title: 'Medical Laboratory Scientist',
   },
   {
     username: 'admin',
@@ -115,10 +115,24 @@ export function saveFacilitySettings(settings: FacilitySettings): void {
 export function loadTestCatalog(): LabTest[] {
   try {
     const raw = localStorage.getItem(CATALOG_KEY);
-    if (!raw) return DEFAULT_TEST_CATALOG;
+    if (!raw) {
+      localStorage.setItem(CATALOG_KEY, JSON.stringify(DEFAULT_TEST_CATALOG));
+      return DEFAULT_TEST_CATALOG;
+    }
     const parsed = JSON.parse(raw) as LabTest[];
     if (Array.isArray(parsed) && parsed.length > 0) {
-      return parsed;
+      const merged = [...parsed];
+      DEFAULT_TEST_CATALOG.forEach((dt) => {
+        const idx = merged.findIndex((t) => t.id === dt.id);
+        if (idx >= 0) {
+          if (merged[idx].priceCents === undefined || merged[idx].priceCents === null) {
+            merged[idx] = { ...merged[idx], priceCents: dt.priceCents };
+          }
+        } else {
+          merged.push(dt);
+        }
+      });
+      return merged;
     }
     return DEFAULT_TEST_CATALOG;
   } catch (e) {
@@ -149,11 +163,6 @@ export function loadSavedReports(): SavedReport[] {
     }
     const parsed = JSON.parse(raw);
     if (Array.isArray(parsed) && parsed.length > 0) {
-      // If user has old minimal dummy dataset, upgrade to full rich mock dataset
-      if (parsed.length <= 5 && parsed.every((r: SavedReport) => r.id && r.id.startsWith('rep_sample_'))) {
-        localStorage.setItem(REPORTS_KEY, JSON.stringify(DUMMY_ARCHIVED_REPORTS));
-        return DUMMY_ARCHIVED_REPORTS;
-      }
       return parsed.map((r: SavedReport) => ({
         ...r,
         status: r.status || 'completed',

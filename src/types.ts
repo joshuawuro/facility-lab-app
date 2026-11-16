@@ -60,6 +60,8 @@ export interface LabTest {
   description?: string;
   isCustom?: boolean;
   layoutType?: 'standard' | 'urine_re';
+  /** price in cents (e.g. 1599 = GHC 15.99) */
+  priceCents?: number;
   parameters: TestParameter[];
 }
 
@@ -75,6 +77,8 @@ export interface SelectedTestState {
   results: Record<string, string>; // parameterId -> value
   comments?: string;
   cyclePhase?: string; // For hormonal profile
+  /** price captured at save time (cents) */
+  priceCents?: number;
 }
 
 export interface FacilitySettings {

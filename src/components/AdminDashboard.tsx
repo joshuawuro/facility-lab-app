@@ -37,6 +37,8 @@ import {
 import { SavedReport, UserAccount, LabTest, FacilitySettings, TestParameter } from '../types';
 import { exportBackupJSON, importBackupJSON } from '../utils/storage';
 import { useToast } from '../context/ToastContext';
+import { getDailyRevenueCents, getTotalGrossRevenueCents, formatCentsGHC, getTestPriceCents, getReportRevenueCents } from '../utils/revenue';
+import { RevenueCard } from './RevenueCard';
 
 // Color Coding Palette for Laboratory Scientists
 export interface ScientistColorTheme {
@@ -195,9 +197,11 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({
   // Interactive Chart States
   const [timeRange, setTimeRange] = useState<'7d' | '30d' | '6m' | '1y'>('6m');
   const [hoveredPointIndex, setHoveredPointIndex] = useState<number | null>(null);
-  const [showReportsCurve, setShowReportsCurve] = useState<boolean>(true);
-  const [showTestsCurve, setShowTestsCurve] = useState<boolean>(true);
+  const [chartViewMode, setChartViewMode] = useState<'revenue' | 'volume'>('revenue');
+  const [donutMetric, setDonutMetric] = useState<'revenue' | 'volume'>('revenue');
   const [hoveredScientist, setHoveredScientist] = useState<string | null>(null);
+  const [showTotalSeries, setShowTotalSeries] = useState<boolean>(true);
+  const [activeScientistSeries, setActiveScientistSeries] = useState<string[]>(['all']);
 
   // Local Catalog State for editing
   const [localCatalog, setLocalCatalog] = useState<LabTest[]>([...catalog]);
@@ -209,6 +213,7 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({
   // New Test Modal State
   const [newTestName, setNewTestName] = useState('');
   const [newTestCategory, setNewTestCategory] = useState('Clinical Chemistry');
+  const [newTestPrice, setNewTestPrice] = useState('80.00');
   const [newTestParams, setNewTestParams] = useState<Array<{ name: string; unit: string; refRange: string; min?: string; max?: string }>>([
     { name: '', unit: '', refRange: '', min: '', max: '' },
   ]);
@@ -231,7 +236,7 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({
   const [newScientistUsername, setNewScientistUsername] = useState('');
   const [newScientistName, setNewScientistName] = useState('');
   const [newScientistPassword, setNewScientistPassword] = useState('password');
-  const [newScientistTitle, setNewScientistTitle] = useState('Medical Laboratory Scientist, MLS (AHPC)');
+  const [newScientistTitle, setNewScientistTitle] = useState('Medical Laboratory Scientist');
   const [userSavedAlert, setUserSavedAlert] = useState(false);
 
   // Facility Settings State
@@ -340,53 +345,107 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({
     customEndDate,
   ]);
 
-  // Statistics calculation per scientist
+  // Statistics calculation per scientist and financial revenue
   const stats = useMemo(() => {
     const scientistCounts: Record<string, number> = {};
+    const scientistRevenues: Record<string, number> = {};
     const testCounts: Record<string, number> = {};
+    const testRevenues: Record<string, number> = {};
+    let periodRevenueCents = 0;
 
     scientistUsers.forEach((sc) => {
       scientistCounts[sc.displayName.toLowerCase()] = 0;
+      scientistRevenues[sc.displayName.toLowerCase()] = 0;
     });
 
     filteredReports.forEach((r) => {
       const perfName = (r.performedByName || r.performedBy || 'Unknown').toLowerCase();
-      let matched = false;
+      let matchedKey = 'other';
       for (const sc of scientistUsers) {
         if (perfName.includes(sc.displayName.toLowerCase()) || perfName.includes(sc.username.toLowerCase())) {
-          scientistCounts[sc.displayName.toLowerCase()] = (scientistCounts[sc.displayName.toLowerCase()] || 0) + 1;
-          matched = true;
+          matchedKey = sc.displayName.toLowerCase();
           break;
         }
       }
-      if (!matched) {
-        scientistCounts['other'] = (scientistCounts['other'] || 0) + 1;
-      }
+      scientistCounts[matchedKey] = (scientistCounts[matchedKey] || 0) + 1;
 
+      let reportRev = 0;
       r.selectedTests.forEach((st) => {
         testCounts[st.testId] = (testCounts[st.testId] || 0) + 1;
+        const price = getTestPriceCents(st, catalog);
+        testRevenues[st.testId] = (testRevenues[st.testId] || 0) + price;
+        reportRev += price;
       });
+
+      scientistRevenues[matchedKey] = (scientistRevenues[matchedKey] || 0) + reportRev;
+      periodRevenueCents += reportRev;
     });
 
     const total = filteredReports.length;
+    const dailyRevenueCents = getDailyRevenueCents(reports, catalog);
+    const allTimeRevenueCents = getTotalGrossRevenueCents(reports, catalog);
 
     return {
       total,
       scientistCounts,
+      scientistRevenues,
       testCounts,
+      testRevenues,
+      periodRevenueCents,
+      dailyRevenueCents,
+      allTimeRevenueCents,
     };
-  }, [filteredReports, scientistUsers]);
+  }, [filteredReports, scientistUsers, reports, catalog]);
 
-  // Interactive timeline stats for Laboratory Performance line chart
+  // Interactive timeline stats for Laboratory Performance & Scientist Analytics
   const interactiveChartStats = useMemo(() => {
     const now = new Date();
-    const list: Array<{
+    interface IntervalScientistData {
+      name: string;
+      reportsCount: number;
+      revenueCents: number;
+      theme: ScientistColorTheme;
+    }
+
+    interface ChartInterval {
       label: string;
       fullLabel: string;
-      reportsCount: number;
-      testsCount: number;
+      totalReports: number;
+      totalRevenueCents: number;
+      byScientist: IntervalScientistData[];
       topScientist: string;
-    }> = [];
+    }
+
+    const intervals: ChartInterval[] = [];
+
+    const buildInterval = (label: string, fullLabel: string, matching: SavedReport[]): ChartInterval => {
+      const byScientist: IntervalScientistData[] = scientistUsers.map((sc, scIdx) => {
+        const scReports = matching.filter((r) => {
+          const perf = (r.performedByName || r.performedBy || '').toLowerCase();
+          return perf.includes(sc.displayName.toLowerCase()) || perf.includes(sc.username.toLowerCase());
+        });
+        const rev = scReports.reduce((sum, r) => sum + getReportRevenueCents(r, catalog), 0);
+        return {
+          name: sc.displayName,
+          reportsCount: scReports.length,
+          revenueCents: rev,
+          theme: SCIENTIST_PALETTES[scIdx % SCIENTIST_PALETTES.length],
+        };
+      });
+
+      const totalReports = matching.length;
+      const totalRevenueCents = matching.reduce((sum, r) => sum + getReportRevenueCents(r, catalog), 0);
+      const topSc = [...byScientist].sort((a, b) => b.revenueCents - a.revenueCents)[0]?.name || 'Dorean';
+
+      return {
+        label,
+        fullLabel,
+        totalReports,
+        totalRevenueCents,
+        byScientist,
+        topScientist: topSc,
+      };
+    };
 
     if (timeRange === '7d') {
       for (let i = 6; i >= 0; i--) {
@@ -401,21 +460,7 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({
           return rDate === dateStr;
         });
 
-        const scientistTally: Record<string, number> = {};
-        matching.forEach((r) => {
-          const name = r.performedByName || r.performedBy || 'Unknown';
-          scientistTally[name] = (scientistTally[name] || 0) + 1;
-        });
-        const topSc = Object.entries(scientistTally).sort((a, b) => b[1] - a[1])[0]?.[0] || 'Dorean';
-        const testsCount = matching.reduce((sum, r) => sum + (r.selectedTests?.reduce((pSum, st) => pSum + (st.selectedParameterIds?.length || 1), 0) || 1), 0);
-
-        list.push({
-          label: `${dayName} ${d.getDate()}`,
-          fullLabel: `${dayName}, ${shortDate}`,
-          reportsCount: matching.length,
-          testsCount,
-          topScientist: topSc,
-        });
+        intervals.push(buildInterval(`${dayName} ${d.getDate()}`, `${dayName}, ${shortDate}`, matching));
       }
     } else if (timeRange === '30d') {
       for (let i = 4; i >= 0; i--) {
@@ -432,21 +477,13 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({
           return rDate >= startIso && rDate <= endIso;
         });
 
-        const scientistTally: Record<string, number> = {};
-        matching.forEach((r) => {
-          const name = r.performedByName || r.performedBy || 'Unknown';
-          scientistTally[name] = (scientistTally[name] || 0) + 1;
-        });
-        const topSc = Object.entries(scientistTally).sort((a, b) => b[1] - a[1])[0]?.[0] || 'Hawa';
-        const testsCount = matching.reduce((sum, r) => sum + (r.selectedTests?.reduce((pSum, st) => pSum + (st.selectedParameterIds?.length || 1), 0) || 1), 0);
-
-        list.push({
-          label: `Wk ${5 - i}`,
-          fullLabel: `${startD.getDate()} ${startD.toLocaleDateString('en-US', { month: 'short' })} – ${endD.getDate()} ${endD.toLocaleDateString('en-US', { month: 'short' })}`,
-          reportsCount: matching.length,
-          testsCount,
-          topScientist: topSc,
-        });
+        intervals.push(
+          buildInterval(
+            `Wk ${5 - i}`,
+            `${startD.getDate()} ${startD.toLocaleDateString('en-US', { month: 'short' })} – ${endD.getDate()} ${endD.toLocaleDateString('en-US', { month: 'short' })}`,
+            matching
+          )
+        );
       }
     } else if (timeRange === '1y') {
       for (let i = 11; i >= 0; i--) {
@@ -460,21 +497,7 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({
           return rDate.getFullYear() === year && rDate.getMonth() === month;
         });
 
-        const scientistTally: Record<string, number> = {};
-        matching.forEach((r) => {
-          const name = r.performedByName || r.performedBy || 'Unknown';
-          scientistTally[name] = (scientistTally[name] || 0) + 1;
-        });
-        const topSc = Object.entries(scientistTally).sort((a, b) => b[1] - a[1])[0]?.[0] || 'Dorean';
-        const testsCount = matching.reduce((sum, r) => sum + (r.selectedTests?.reduce((pSum, st) => pSum + (st.selectedParameterIds?.length || 1), 0) || 1), 0);
-
-        list.push({
-          label: monthName,
-          fullLabel: `${monthName} ${year}`,
-          reportsCount: matching.length,
-          testsCount,
-          topScientist: topSc,
-        });
+        intervals.push(buildInterval(monthName, `${monthName} ${year}`, matching));
       }
     } else {
       // 6m
@@ -489,26 +512,50 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({
           return rDate.getFullYear() === year && rDate.getMonth() === month;
         });
 
-        const scientistTally: Record<string, number> = {};
-        matching.forEach((r) => {
-          const name = r.performedByName || r.performedBy || 'Unknown';
-          scientistTally[name] = (scientistTally[name] || 0) + 1;
-        });
-        const topSc = Object.entries(scientistTally).sort((a, b) => b[1] - a[1])[0]?.[0] || (i % 2 === 0 ? 'Dorean' : 'Hawa');
-        const testsCount = matching.reduce((sum, r) => sum + (r.selectedTests?.reduce((pSum, st) => pSum + (st.selectedParameterIds?.length || 1), 0) || 1), 0);
-
-        list.push({
-          label: monthName,
-          fullLabel: `${monthName} ${year}`,
-          reportsCount: matching.length,
-          testsCount,
-          topScientist: topSc,
-        });
+        intervals.push(buildInterval(monthName, `${monthName} ${year}`, matching));
       }
     }
 
-    return list;
-  }, [reports, timeRange]);
+    return intervals;
+  }, [reports, timeRange, scientistUsers, catalog]);
+
+  // Aggregated scientist performance for the active timeRange
+  const scientistPeriodPerformance = useMemo(() => {
+    let totalTimeRangeRev = 0;
+    let totalTimeRangeReports = 0;
+
+    const list = scientistUsers.map((sc, scIdx) => {
+      const theme = SCIENTIST_PALETTES[scIdx % SCIENTIST_PALETTES.length];
+      let scientistRev = 0;
+      let scientistCount = 0;
+
+      interactiveChartStats.forEach((interval) => {
+        const scData = interval.byScientist.find((b) => b.name === sc.displayName);
+        if (scData) {
+          scientistRev += scData.revenueCents;
+          scientistCount += scData.reportsCount;
+        }
+      });
+
+      totalTimeRangeRev += scientistRev;
+      totalTimeRangeReports += scientistCount;
+
+      return {
+        user: sc,
+        name: sc.displayName,
+        theme,
+        revenueCents: scientistRev,
+        reportsCount: scientistCount,
+        avgTicketCents: scientistCount > 0 ? Math.round(scientistRev / scientistCount) : 0,
+      };
+    });
+
+    return {
+      scientists: list,
+      totalRevenueCents: totalTimeRangeRev,
+      totalReports: totalTimeRangeReports,
+    };
+  }, [scientistUsers, interactiveChartStats]);
 
   // Current month count
   const currentMonthReportsCount = useMemo(() => {
@@ -521,39 +568,45 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({
     }).length;
   }, [reports]);
 
-  // Scientist Breakdown for Donut Chart & Workload Cards
+  // Scientist Breakdown for Donut Chart & Workload Cards (supports volume and revenue)
   const scientistBreakdown = useMemo(() => {
     const items = scientistUsers.map((sc, i) => {
       const theme = SCIENTIST_PALETTES[i % SCIENTIST_PALETTES.length];
-      const count = reports.filter((r) => {
+      const matchingReports = reports.filter((r) => {
         const perf = (r.performedByName || r.performedBy || '').toLowerCase();
         return perf.includes(sc.displayName.toLowerCase()) || perf.includes(sc.username.toLowerCase());
-      }).length;
+      });
+      const count = matchingReports.length;
+      const revenueCents = matchingReports.reduce((sum, r) => sum + getReportRevenueCents(r, catalog), 0);
       return {
         user: sc,
         name: sc.displayName,
         count,
+        revenueCents,
         theme,
       };
     });
 
-    const otherCount = reports.filter((r) => {
+    const otherReports = reports.filter((r) => {
       const perf = (r.performedByName || r.performedBy || '').toLowerCase();
       return !scientistUsers.some(
         (sc) => perf.includes(sc.displayName.toLowerCase()) || perf.includes(sc.username.toLowerCase())
       );
-    }).length;
+    });
+    const otherCount = otherReports.length;
+    const otherRevenueCents = otherReports.reduce((sum, r) => sum + getReportRevenueCents(r, catalog), 0);
 
     if (otherCount > 0) {
       items.push({
         user: { username: 'other', displayName: 'Other / Admin', role: 'admin' } as UserAccount,
         name: 'Other',
         count: otherCount,
+        revenueCents: otherRevenueCents,
         theme: {
           name: 'Slate',
-          badgeBg: 'bg-slate-100 ',
-          badgeText: 'text-slate-700 ',
-          badgeBorder: 'border-slate-300 ',
+          badgeBg: 'bg-slate-100',
+          badgeText: 'text-slate-700',
+          badgeBorder: 'border-slate-300',
           avatarBg: 'bg-slate-600',
           avatarText: 'text-white',
           hex: '#64748b',
@@ -565,12 +618,14 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({
     }
 
     const total = items.reduce((sum, item) => sum + item.count, 0);
+    const totalRevenueCents = items.reduce((sum, item) => sum + item.revenueCents, 0);
 
     return {
       items,
       total,
+      totalRevenueCents,
     };
-  }, [reports, scientistUsers]);
+  }, [reports, scientistUsers, catalog]);
 
   // Export filtered audit report to CSV
   const handleExportCSV = () => {
@@ -633,7 +688,7 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({
       displayName: newScientistName.trim(),
       password: newScientistPassword || 'password',
       role: 'scientist',
-      title: newScientistTitle.trim() || 'Medical Laboratory Scientist, MLS (AHPC)',
+      title: newScientistTitle.trim() || 'Medical Laboratory Scientist',
     };
 
     const updated = [...localUsers, newUser];
@@ -709,11 +764,13 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({
       return;
     }
 
+    const parsedPrice = parseFloat(newTestPrice);
     const createdTest: LabTest = {
       id: `test_${Date.now()}`,
       name: newTestName.trim().toUpperCase(),
       category: newTestCategory.trim() || 'Clinical Chemistry',
       isCustom: true,
+      priceCents: isNaN(parsedPrice) ? 0 : Math.round(parsedPrice * 100),
       parameters: validParams,
     };
 
@@ -856,69 +913,69 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({
 
   return (
     <div className="min-h-screen bg-slate-100/70 text-slate-800 font-sans transition-colors pb-16">
-      {/* Top Admin Header Bar (Cyno style) */}
+      {/* Top Admin Header Bar (Cyno style) with enhanced padding */}
       <header className="bg-white/95 backdrop-blur-md border-b border-slate-200/90 sticky top-0 z-30 shadow-xs transition-colors">
-        <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
-          <div className="flex items-center justify-between h-18">
+        <div className="max-w-7xl mx-auto px-4 sm:px-8 lg:px-10 py-4 sm:py-5">
+          <div className="flex items-center justify-between">
             {/* Logo & Facility Title */}
-            <div className="flex items-center space-x-3.5">
+            <div className="flex items-center space-x-4">
               {facilitySettings.logoUrl ? (
-                <div className="w-10 h-10 aspect-square rounded-full overflow-hidden border-2 border-teal-500/40 bg-white p-0.5 flex items-center justify-center shadow-xs shrink-0">
+                <div className="w-12 h-12 aspect-square rounded-2xl overflow-hidden border-2 border-teal-500/30 bg-white p-1 flex items-center justify-center shadow-xs shrink-0">
                   <img
                     src={facilitySettings.logoUrl}
                     alt="Clinic Logo"
-                    className="w-full h-full object-contain aspect-square rounded-full"
+                    className="w-full h-full object-contain aspect-square rounded-xl"
                   />
                 </div>
               ) : (
-                <div className="w-10 h-10 aspect-square rounded-full bg-teal-600 text-white flex items-center justify-center shadow-xs shrink-0 font-extrabold">
-                  <Shield className="h-5 w-5" />
+                <div className="w-12 h-12 aspect-square rounded-2xl bg-gradient-to-tr from-teal-700 to-teal-500 text-white flex items-center justify-center shadow-xs shrink-0 font-extrabold">
+                  <Shield className="h-6 w-6" />
                 </div>
               )}
               <div>
-                <h1 className="font-black text-slate-900 text-xs sm:text-sm tracking-tight uppercase leading-tight">
+                <h1 className="font-black text-slate-900 text-sm sm:text-base tracking-tight uppercase leading-snug">
                   {facilitySettings.facilityName || 'CARE AND SOCIAL POLYCLINIC'}
                 </h1>
-                <p className="text-[10px] text-teal-700 font-extrabold tracking-wider uppercase mt-0.5">
-                  LIS Administrator &bull; Management Hub
+                <p className="text-[11px] text-teal-700 font-extrabold tracking-wider uppercase mt-0.5">
+                  Administrator &bull; Management Hub
                 </p>
               </div>
             </div>
 
             {/* Right Action Icons (Cyno style) */}
-            <div className="flex items-center space-x-2.5">
+            <div className="flex items-center space-x-3">
               {/* Notification Bell */}
               <div className="relative">
                 <button
                   type="button"
-                  className="w-9 h-9 rounded-full bg-slate-100 hover:bg-slate-200 border border-slate-200 text-slate-600 hover:text-slate-900 flex items-center justify-center transition-all cursor-pointer shadow-xs"
+                  className="w-10 h-10 rounded-full bg-slate-100 hover:bg-slate-200 border border-slate-200 text-slate-600 hover:text-slate-900 flex items-center justify-center transition-all cursor-pointer shadow-xs"
                   title="Notifications"
                 >
                   <Bell className="w-4 h-4" />
                 </button>
-                <span className="absolute top-1 right-1 w-2 h-2 rounded-full bg-teal-400 ring-2 ring-slate-900 animate-pulse" />
+                <span className="absolute top-1 right-1 w-2.5 h-2.5 rounded-full bg-teal-500 ring-2 ring-white animate-pulse" />
               </div>
 
-              {/* User Profile Pill (John Alevy style) */}
+              {/* User Profile Pill */}
               <div className="flex items-center pl-1 sm:pl-2">
-                <div className="flex items-center space-x-2.5 py-1 px-3 rounded-full bg-slate-100 border border-slate-200 text-slate-800">
-                  <div className="w-7 h-7 rounded-full bg-gradient-to-tr from-teal-700 to-emerald-500 text-white flex items-center justify-center text-xs font-black shadow-xs">
+                <div className="flex items-center space-x-3 py-1.5 px-3.5 rounded-full bg-slate-100 border border-slate-200 text-slate-800 shadow-2xs">
+                  <div className="w-8 h-8 rounded-full bg-gradient-to-tr from-teal-700 to-emerald-500 text-white flex items-center justify-center text-xs font-black shadow-xs">
                     {currentUser.displayName ? currentUser.displayName.charAt(0).toUpperCase() : 'A'}
                   </div>
                   <div className="hidden sm:block text-left">
                     <div className="text-xs font-black text-slate-900 leading-tight">
                       {currentUser.displayName || 'Admin'}
                     </div>
-                    <div className="text-[9px] font-bold text-teal-700 uppercase tracking-wider">
+                    <div className="text-[10px] font-bold text-teal-700 uppercase tracking-wider">
                       Administrator
                     </div>
                   </div>
                   <button
                     onClick={onLogout}
-                    className="p-1 text-slate-400 hover:text-rose-400 transition-colors ml-1 cursor-pointer"
+                    className="p-1 text-slate-400 hover:text-rose-500 transition-colors ml-1 cursor-pointer"
                     title="Log Out"
                   >
-                    <LogOut className="w-3.5 h-3.5" />
+                    <LogOut className="w-4 h-4" />
                   </button>
                 </div>
               </div>
@@ -927,19 +984,18 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({
         </div>
       </header>
 
-      {/* Secondary Navigation Bar - Dedicated space below the main header */}
+      {/* Secondary Navigation Bar - Centered Navigation Pills (No admin control center text) */}
       <div className="bg-white border-b border-slate-200/90 shadow-2xs">
         <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
-          <div className="flex items-center justify-between py-3 overflow-x-auto scrollbar-none gap-4">
-            {/* Navigation Pills */}
+          <div className="flex items-center justify-center py-3.5 overflow-x-auto scrollbar-none">
+            {/* Centered Navigation Pills */}
             <nav className="flex items-center gap-1.5 p-1.5 bg-slate-100/90 rounded-2xl border border-slate-200/80 shadow-xs shrink-0">
               <button
                 onClick={() => setActiveAdminTab('stats')}
-                className={`px-4 py-2 rounded-xl text-xs font-black flex items-center space-x-2 transition-all cursor-pointer ${
-                  activeAdminTab === 'stats'
+                className={`px-5 py-2.5 rounded-xl text-xs font-black flex items-center space-x-2 transition-all cursor-pointer ${activeAdminTab === 'stats'
                     ? 'bg-teal-700 text-white shadow-md shadow-teal-700/25 ring-1 ring-teal-500/40'
                     : 'text-slate-600 hover:text-slate-900 hover:bg-slate-200/70'
-                }`}
+                  }`}
               >
                 <BarChart3 className="w-3.5 h-3.5" />
                 <span>Dashboard</span>
@@ -947,11 +1003,10 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({
 
               <button
                 onClick={() => setActiveAdminTab('catalog')}
-                className={`px-4 py-2 rounded-xl text-xs font-black flex items-center space-x-2 transition-all cursor-pointer ${
-                  activeAdminTab === 'catalog'
+                className={`px-5 py-2.5 rounded-xl text-xs font-black flex items-center space-x-2 transition-all cursor-pointer ${activeAdminTab === 'catalog'
                     ? 'bg-teal-700 text-white shadow-md shadow-teal-700/25 ring-1 ring-teal-500/40'
                     : 'text-slate-600 hover:text-slate-900 hover:bg-slate-200/70'
-                }`}
+                  }`}
               >
                 <Activity className="w-3.5 h-3.5" />
                 <span>Lab Tests</span>
@@ -959,11 +1014,10 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({
 
               <button
                 onClick={() => setActiveAdminTab('scientists')}
-                className={`px-4 py-2 rounded-xl text-xs font-black flex items-center space-x-2 transition-all cursor-pointer ${
-                  activeAdminTab === 'scientists'
+                className={`px-5 py-2.5 rounded-xl text-xs font-black flex items-center space-x-2 transition-all cursor-pointer ${activeAdminTab === 'scientists'
                     ? 'bg-teal-700 text-white shadow-md shadow-teal-700/25 ring-1 ring-teal-500/40'
                     : 'text-slate-600 hover:text-slate-900 hover:bg-slate-200/70'
-                }`}
+                  }`}
               >
                 <Users className="w-3.5 h-3.5" />
                 <span>Scientists ({scientistUsers.length})</span>
@@ -971,11 +1025,10 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({
 
               <button
                 onClick={() => setActiveAdminTab('facility')}
-                className={`px-4 py-2 rounded-xl text-xs font-black flex items-center space-x-2 transition-all cursor-pointer ${
-                  activeAdminTab === 'facility'
+                className={`px-5 py-2.5 rounded-xl text-xs font-black flex items-center space-x-2 transition-all cursor-pointer ${activeAdminTab === 'facility'
                     ? 'bg-teal-700 text-white shadow-md shadow-teal-700/25 ring-1 ring-teal-500/40'
                     : 'text-slate-600 hover:text-slate-900 hover:bg-slate-200/70'
-                }`}
+                  }`}
               >
                 <Building className="w-3.5 h-3.5" />
                 <span>Header &amp; Logo</span>
@@ -983,24 +1036,15 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({
 
               <button
                 onClick={() => setActiveAdminTab('backup')}
-                className={`px-4 py-2 rounded-xl text-xs font-black flex items-center space-x-2 transition-all cursor-pointer ${
-                  activeAdminTab === 'backup'
+                className={`px-5 py-2.5 rounded-xl text-xs font-black flex items-center space-x-2 transition-all cursor-pointer ${activeAdminTab === 'backup'
                     ? 'bg-teal-700 text-white shadow-md shadow-teal-700/25 ring-1 ring-teal-500/40'
                     : 'text-slate-600 hover:text-slate-900 hover:bg-slate-200/70'
-                }`}
+                  }`}
               >
                 <Download className="w-3.5 h-3.5" />
                 <span>Backup</span>
               </button>
             </nav>
-
-            {/* Quick Context Status Pill */}
-            <div className="hidden sm:flex items-center gap-2 text-xs text-slate-500 font-semibold shrink-0">
-              <span className="flex items-center gap-1.5 px-3 py-1 bg-teal-50 text-teal-800 rounded-full border border-teal-200/80 font-bold text-[11px]">
-                <span className="w-2 h-2 rounded-full bg-teal-600 animate-pulse" />
-                LIS Control Center
-              </span>
-            </div>
           </div>
         </div>
       </div>
@@ -1049,51 +1093,81 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({
         {/* ======================================================== */}
         {activeAdminTab === 'stats' && (
           <div className="space-y-7">
-            {/* 4 Cyno-styled Stat Cards */}
-            <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4 sm:gap-5">
-              {/* Card 1: Total Tests Conducted */}
+            {/* 5 Cyno-styled Stat Cards including Daily & Total Gross Billings */}
+            <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 lg:grid-cols-5 gap-4 sm:gap-5">
+              {/* Card 1: Daily Gross Revenue (Today) */}
+              <RevenueCard
+                title="Daily Gross Revenue"
+                totalCents={stats.dailyRevenueCents}
+                subtitle="Today's lab gross billings"
+                badgeText="Today"
+              />
+
+              {/* Card 2: Period Gross Revenue */}
               <div className="bg-white rounded-3xl p-6 shadow-sm border border-slate-200/90 flex flex-col justify-between transition-all hover:shadow-md">
                 <div className="flex items-start justify-between">
-                  <div className="w-12 h-12 rounded-full bg-teal-50 dark:bg-teal-950/60 text-teal-600 dark:text-teal-400 flex items-center justify-center shadow-xs">
+                  <div className="w-12 h-12 rounded-full bg-teal-50 text-teal-600 flex items-center justify-center shadow-xs font-black text-xl">
+                    <span>GH₵</span>
+                  </div>
+                  <span className="inline-flex items-center space-x-1 px-2.5 py-1 rounded-full text-[11px] font-black bg-teal-50 text-teal-700 border border-teal-200">
+                    <TrendingUp className="w-3 h-3 text-teal-600" />
+                    <span>{selectedDateFilter === 'all' ? 'All-Time' : 'Period'}</span>
+                  </span>
+                </div>
+                <div className="mt-4">
+                  <div className="text-2xl sm:text-3xl font-black text-slate-900 tracking-tight">
+                    {formatCentsGHC(stats.periodRevenueCents)}
+                  </div>
+                  <p className="text-xs font-semibold text-slate-500 mt-1">
+                    {selectedDateFilter === 'all' ? 'Total Gross Revenue' : 'Period Gross Revenue'}
+                  </p>
+                  <p className="text-[11px] font-medium text-teal-600 mt-0.5">
+                    {filteredReports.length} {filteredReports.length === 1 ? 'sample' : 'samples'} billed
+                  </p>
+                </div>
+              </div>
+
+              {/* Card 3: Total Reports Processed */}
+              <div className="bg-white rounded-3xl p-6 shadow-sm border border-slate-200/90 flex flex-col justify-between transition-all hover:shadow-md">
+                <div className="flex items-start justify-between">
+                  <div className="w-12 h-12 rounded-full bg-teal-50 text-teal-600 flex items-center justify-center shadow-xs">
                     <Activity className="w-6 h-6" />
                   </div>
-                  <span className="inline-flex items-center space-x-1 px-2.5 py-1 rounded-full text-[11px] font-black bg-emerald-50 dark:bg-emerald-950/60 text-emerald-600 dark:text-emerald-400 border border-emerald-200 dark:border-emerald-800/60">
-                    <TrendingUp className="w-3 h-3" />
-                    <span>+22.5%</span>
+                  <span className="inline-flex items-center space-x-1 px-2.5 py-1 rounded-full text-[11px] font-black bg-emerald-50 text-emerald-600 border border-emerald-200">
+                    <span>{selectedDateFilter === 'all' ? 'All-Time' : 'Period'}</span>
                   </span>
                 </div>
                 <div className="mt-4">
-                  <div className="text-3xl sm:text-4xl font-black text-slate-900  tracking-tight">
+                  <div className="text-3xl sm:text-4xl font-black text-slate-900 tracking-tight">
                     {stats.total.toLocaleString()}
                   </div>
-                  <p className="text-xs font-semibold text-slate-500  mt-1">
-                    Total Tests Conducted
+                  <p className="text-xs font-semibold text-slate-500 mt-1">
+                    Total Reports Processed
                   </p>
                 </div>
               </div>
 
-              {/* Card 2: Patient Samples */}
+              {/* Card 4: All-Time Patient Reports */}
               <div className="bg-white rounded-3xl p-6 shadow-sm border border-slate-200/90 flex flex-col justify-between transition-all hover:shadow-md">
                 <div className="flex items-start justify-between">
-                  <div className="w-12 h-12 rounded-full bg-sky-50 dark:bg-sky-950/60 text-sky-600 dark:text-sky-400 flex items-center justify-center shadow-xs">
+                  <div className="w-12 h-12 rounded-full bg-sky-50 text-sky-600 flex items-center justify-center shadow-xs">
                     <FileCheck className="w-6 h-6" />
                   </div>
-                  <span className="inline-flex items-center space-x-1 px-2.5 py-1 rounded-full text-[11px] font-black bg-emerald-50 dark:bg-emerald-950/60 text-emerald-600 dark:text-emerald-400 border border-emerald-200 dark:border-emerald-800/60">
-                    <TrendingUp className="w-3 h-3" />
-                    <span>+4.10%</span>
+                  <span className="inline-flex items-center space-x-1 px-2.5 py-1 rounded-full text-[11px] font-black bg-sky-50 text-sky-600 border border-sky-200">
+                    <span>All-Time</span>
                   </span>
                 </div>
                 <div className="mt-4">
-                  <div className="text-3xl sm:text-4xl font-black text-slate-900  tracking-tight">
+                  <div className="text-3xl sm:text-4xl font-black text-slate-900 tracking-tight">
                     {reports.length.toLocaleString()}
                   </div>
-                  <p className="text-xs font-semibold text-slate-500  mt-1">
-                    Patient Samples Analyzed
+                  <p className="text-xs font-semibold text-slate-500 mt-1">
+                    Total Patient Reports
                   </p>
                 </div>
               </div>
 
-              {/* Card 3: Active Lab Scientists */}
+              {/* Card 5: Active Lab Scientists */}
               <div className="bg-white rounded-3xl p-6 shadow-sm border border-slate-200/90 flex flex-col justify-between transition-all hover:shadow-md">
                 <div className="flex items-start justify-between">
                   <div className="w-12 h-12 rounded-full bg-emerald-50 dark:bg-emerald-950/60 text-emerald-600 dark:text-emerald-400 flex items-center justify-center shadow-xs">
@@ -1108,27 +1182,7 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({
                     {scientistUsers.length}
                   </div>
                   <p className="text-xs font-semibold text-slate-500  mt-1">
-                    Licensed MLS (AHPC) Staff
-                  </p>
-                </div>
-              </div>
-
-              {/* Card 4: Completed This Month */}
-              <div className="bg-white rounded-3xl p-6 shadow-sm border border-slate-200/90 flex flex-col justify-between transition-all hover:shadow-md">
-                <div className="flex items-start justify-between">
-                  <div className="w-12 h-12 rounded-full bg-purple-50 dark:bg-purple-950/60 text-purple-600 dark:text-purple-400 flex items-center justify-center shadow-xs">
-                    <Calendar className="w-6 h-6" />
-                  </div>
-                  <span className="inline-flex items-center space-x-1 px-2.5 py-1 rounded-full text-[11px] font-black bg-purple-50 dark:bg-purple-950/60 text-purple-700 dark:text-purple-300 border border-purple-200 dark:border-purple-800/60">
-                    <span>On Track</span>
-                  </span>
-                </div>
-                <div className="mt-4">
-                  <div className="text-3xl sm:text-4xl font-black text-slate-900  tracking-tight">
-                    {currentMonthReportsCount}
-                  </div>
-                  <p className="text-xs font-semibold text-slate-500  mt-1">
-                    Completed This Month
+                    Active Medical Scientists
                   </p>
                 </div>
               </div>
@@ -1136,41 +1190,45 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({
 
             {/* Cyno Dual Charts Section - Fully Interactive */}
             <div className="grid grid-cols-1 lg:grid-cols-12 gap-6">
-              {/* Left Chart: Laboratory Performance (Interactive SVG Curve) */}
+              {/* Left Chart: Scientist Performance & Revenue Timeline */}
               <div className="lg:col-span-8 bg-white rounded-3xl p-6 sm:p-7 shadow-sm border border-slate-200/90 flex flex-col justify-between">
                 <div>
                   <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 pb-4 border-b border-slate-100">
                     <div>
-                      <h3 className="text-base font-black text-slate-900 flex items-center gap-2">
+                      <div className="flex items-center gap-2">
                         <TrendingUp className="w-4 h-4 text-teal-600" />
-                        <span>Laboratory Performance Timeline</span>
-                      </h3>
-                      {/* Clickable Legend Series Toggles */}
-                      <div className="flex items-center space-x-3 mt-2">
+                        <h3 className="text-base font-black text-slate-900">
+                          Scientist Performance & Revenue Analytics
+                        </h3>
+                      </div>
+                      <p className="text-[11px] text-slate-500 mt-0.5">
+                        Compare workload and gross revenue generated per laboratory scientist over time
+                      </p>
+
+                      {/* Metric Toggle Buttons: Revenue (GH₵) vs Labs Conducted */}
+                      <div className="flex items-center space-x-2 mt-3">
                         <button
                           type="button"
-                          onClick={() => setShowReportsCurve(!showReportsCurve)}
-                          className={`flex items-center space-x-1.5 text-xs font-bold px-2.5 py-1 rounded-full border transition-all cursor-pointer ${
-                            showReportsCurve
-                              ? 'bg-teal-50 border-teal-300 text-teal-900 shadow-2xs'
-                              : 'bg-slate-100 border-slate-200 text-slate-400 opacity-60'
-                          }`}
+                          onClick={() => setChartViewMode('revenue')}
+                          className={`flex items-center space-x-1.5 text-xs font-bold px-3 py-1.5 rounded-full border transition-all cursor-pointer ${chartViewMode === 'revenue'
+                              ? 'bg-emerald-500 text-white border-emerald-600 shadow-xs'
+                              : 'bg-slate-100 border-slate-200 text-slate-600 hover:bg-slate-200'
+                            }`}
                         >
-                          <span className="w-2.5 h-2.5 rounded-full bg-teal-600" />
-                          <span>Patient Reports</span>
+                          <Activity className="w-3.5 h-3.5" />
+                          <span>Gross Revenue (GH₵)</span>
                         </button>
 
                         <button
                           type="button"
-                          onClick={() => setShowTestsCurve(!showTestsCurve)}
-                          className={`flex items-center space-x-1.5 text-xs font-bold px-2.5 py-1 rounded-full border transition-all cursor-pointer ${
-                            showTestsCurve
-                              ? 'bg-purple-50 border-purple-300 text-purple-900 shadow-2xs'
-                              : 'bg-slate-100 border-slate-200 text-slate-400 opacity-60'
-                          }`}
+                          onClick={() => setChartViewMode('volume')}
+                          className={`flex items-center space-x-1.5 text-xs font-bold px-3 py-1.5 rounded-full border transition-all cursor-pointer ${chartViewMode === 'volume'
+                              ? 'bg-teal-700 text-white border-teal-800 shadow-xs'
+                              : 'bg-slate-100 border-slate-200 text-slate-600 hover:bg-slate-200'
+                            }`}
                         >
-                          <span className="w-2.5 h-2.5 rounded-full bg-purple-600" />
-                          <span>Test Analytes</span>
+                          <FileText className="w-3.5 h-3.5" />
+                          <span>Labs Conducted (Volume)</span>
                         </button>
                       </div>
                     </div>
@@ -1192,11 +1250,10 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({
                               setTimeRange(range);
                               setHoveredPointIndex(null);
                             }}
-                            className={`px-3 py-1 rounded-full text-xs font-extrabold transition-all cursor-pointer ${
-                              timeRange === range
+                            className={`px-3 py-1 rounded-full text-xs font-extrabold transition-all cursor-pointer ${timeRange === range
                                 ? 'bg-teal-700 text-white shadow-xs'
                                 : 'text-slate-600 hover:text-slate-900 hover:bg-slate-200'
-                            }`}
+                              }`}
                           >
                             {labels[range]}
                           </button>
@@ -1205,139 +1262,259 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({
                     </div>
                   </div>
 
-                  {/* SVG Wave Line Chart with Interactive Mouse Tracking */}
+                  {/* Active Series Legend Toggles: All (Cumulative) + Scientists */}
+                  <div className="flex flex-wrap items-center gap-2.5 pt-3">
+                    <span className="text-[11px] font-bold text-slate-400 uppercase tracking-wider">
+                      Active Series:
+                    </span>
+
+                    {/* All (Cumulative) Toggle Pill */}
+                    <button
+                      type="button"
+                      onClick={() => setShowTotalSeries(!showTotalSeries)}
+                      className={`flex items-center space-x-1.5 px-3 py-1 rounded-full text-xs font-black transition-all cursor-pointer border ${showTotalSeries
+                          ? 'bg-teal-700 text-white border-teal-800 shadow-xs'
+                          : 'bg-slate-100 text-slate-400 border-slate-200 opacity-60'
+                        }`}
+                    >
+                      <span className="w-2.5 h-2.5 rounded-full bg-teal-300 ring-2 ring-white/50" />
+                      <span>All (Cumulative Total)</span>
+                    </button>
+
+                    {/* Per-Scientist Toggles */}
+                    {scientistUsers.map((sc, idx) => {
+                      const theme = SCIENTIST_PALETTES[idx % SCIENTIST_PALETTES.length];
+                      const isHovered = hoveredScientist === sc.displayName;
+                      const isVisible = activeScientistSeries.includes('all') || activeScientistSeries.includes(sc.displayName);
+
+                      return (
+                        <button
+                          key={sc.username}
+                          type="button"
+                          onClick={() => {
+                            if (activeScientistSeries.includes('all')) {
+                              setActiveScientistSeries([sc.displayName]);
+                            } else if (activeScientistSeries.includes(sc.displayName)) {
+                              const remaining = activeScientistSeries.filter((s) => s !== sc.displayName);
+                              setActiveScientistSeries(remaining.length === 0 ? ['all'] : remaining);
+                            } else {
+                              setActiveScientistSeries([...activeScientistSeries, sc.displayName]);
+                            }
+                          }}
+                          onMouseEnter={() => setHoveredScientist(sc.displayName)}
+                          onMouseLeave={() => setHoveredScientist(null)}
+                          className={`flex items-center space-x-1.5 px-2.5 py-1 rounded-full text-xs font-extrabold transition-all cursor-pointer border ${isHovered
+                              ? 'bg-slate-900 text-white border-slate-900 shadow-xs ring-2 ring-slate-400'
+                              : isVisible
+                                ? 'bg-slate-50 text-slate-800 border-slate-300 shadow-2xs'
+                                : 'bg-slate-100 text-slate-400 border-slate-200 opacity-50'
+                            }`}
+                        >
+                          <span
+                            className="w-2.5 h-2.5 rounded-full shrink-0"
+                            style={{ backgroundColor: theme.hex }}
+                          />
+                          <span>{sc.displayName}</span>
+                        </button>
+                      );
+                    })}
+
+                    {!activeScientistSeries.includes('all') && (
+                      <button
+                        type="button"
+                        onClick={() => setActiveScientistSeries(['all'])}
+                        className="text-[10px] text-teal-700 font-extrabold hover:underline ml-1 cursor-pointer"
+                      >
+                        Reset All Series
+                      </button>
+                    )}
+                  </div>
+
+                  {/* Linear Multi-Series SVG Chart */}
                   <div className="relative pt-6 pb-2" onMouseLeave={() => setHoveredPointIndex(null)}>
                     {(() => {
                       const data = interactiveChartStats;
+                      const isRev = chartViewMode === 'revenue';
+
+                      // Find max value across all intervals (cumulative total is highest)
                       const maxVal = Math.max(
-                        ...data.map((m) => Math.max(m.reportsCount, m.testsCount)),
-                        10
+                        ...data.map((m) =>
+                          isRev
+                            ? Math.max(m.totalRevenueCents, ...m.byScientist.map((s) => s.revenueCents), 10000)
+                            : Math.max(m.totalReports, ...m.byScientist.map((s) => s.reportsCount), 4)
+                        ),
+                        isRev ? 20000 : 5
                       );
+
                       const width = 560;
-                      const height = 190;
+                      const height = 200;
                       const padX = 35;
                       const usableW = width - padX * 2;
                       const stepX = data.length > 1 ? usableW / (data.length - 1) : usableW;
+                      const baseY = height - 28;
+                      const usableH = height - 50;
 
-                      const repPoints = data.map((m, idx) => ({
-                        x: padX + idx * stepX,
-                        y: height - 32 - (m.reportsCount / maxVal) * (height - 55),
-                        val: m.reportsCount,
-                        item: m,
-                      }));
+                      // 1. Calculate Linear Points for Cumulative Total
+                      const totalPoints = data.map((m, idx) => {
+                        const val = isRev ? m.totalRevenueCents : m.totalReports;
+                        return {
+                          x: padX + idx * stepX,
+                          y: baseY - (maxVal > 0 ? (val / maxVal) * usableH : 0),
+                          val,
+                          item: m,
+                        };
+                      });
 
-                      const testPoints = data.map((m, idx) => ({
-                        x: padX + idx * stepX,
-                        y: height - 32 - (m.testsCount / maxVal) * (height - 55),
-                        val: m.testsCount,
-                        item: m,
-                      }));
+                      // 2. Calculate Linear Points for each Scientist
+                      const scientistSeriesList = scientistUsers.map((sc, scIdx) => {
+                        const theme = SCIENTIST_PALETTES[scIdx % SCIENTIST_PALETTES.length];
+                        const isVisible = activeScientistSeries.includes('all') || activeScientistSeries.includes(sc.displayName);
 
-                      const createSmoothPath = (pts: { x: number; y: number }[]) => {
+                        const points = data.map((m, idx) => {
+                          const scData = m.byScientist.find((b) => b.name === sc.displayName);
+                          const val = scData ? (isRev ? scData.revenueCents : scData.reportsCount) : 0;
+                          return {
+                            x: padX + idx * stepX,
+                            y: baseY - (maxVal > 0 ? (val / maxVal) * usableH : 0),
+                            val,
+                          };
+                        });
+
+                        return {
+                          name: sc.displayName,
+                          theme,
+                          isVisible,
+                          points,
+                        };
+                      });
+
+                      // Linear SVG path helpers
+                      const createLinearPath = (pts: { x: number; y: number }[]) => {
                         if (pts.length === 0) return '';
-                        let d = `M ${pts[0].x} ${pts[0].y}`;
-                        for (let i = 0; i < pts.length - 1; i++) {
-                          const p0 = pts[i];
-                          const p1 = pts[i + 1];
-                          const cx = (p0.x + p1.x) / 2;
-                          d += ` C ${cx} ${p0.y}, ${cx} ${p1.y}, ${p1.x} ${p1.y}`;
-                        }
-                        return d;
+                        return pts.map((p, i) => (i === 0 ? `M ${p.x} ${p.y}` : `L ${p.x} ${p.y}`)).join(' ');
                       };
 
-                      const repPath = createSmoothPath(repPoints);
-                      const testPath = createSmoothPath(testPoints);
-                      const repArea = `${repPath} L ${repPoints[repPoints.length - 1].x} ${height - 24} L ${repPoints[0].x} ${height - 24} Z`;
-                      const testArea = `${testPath} L ${testPoints[testPoints.length - 1].x} ${height - 24} L ${testPoints[0].x} ${height - 24} Z`;
+                      const createLinearArea = (pts: { x: number; y: number }[]) => {
+                        if (pts.length === 0) return '';
+                        const line = createLinearPath(pts);
+                        return `${line} L ${pts[pts.length - 1].x} ${baseY} L ${pts[0].x} ${baseY} Z`;
+                      };
+
+                      const totalPath = createLinearPath(totalPoints);
+                      const totalArea = createLinearArea(totalPoints);
 
                       const activeIdx = hoveredPointIndex !== null ? hoveredPointIndex : null;
-                      const activePoint = activeIdx !== null ? repPoints[activeIdx] : null;
-                      const activeTestPoint = activeIdx !== null ? testPoints[activeIdx] : null;
+                      const activeItem = activeIdx !== null ? data[activeIdx] : null;
 
                       return (
                         <div className="relative w-full h-56 sm:h-64">
                           {/* Floating Interactive Tooltip Card */}
-                          {activeIdx !== null && activePoint && (
+                          {activeIdx !== null && activeItem && (
                             <div
-                              className="absolute z-30 pointer-events-none transition-all duration-150 transform -translate-x-1/2 -translate-y-full bg-slate-900/95 text-white rounded-2xl p-3.5 shadow-2xl border border-slate-700 text-xs min-w-[180px]"
+                              className="absolute z-30 pointer-events-none transition-all duration-150 transform -translate-x-1/2 -translate-y-full bg-slate-900/95 backdrop-blur-md text-white rounded-2xl p-3.5 shadow-2xl border border-slate-700 text-xs min-w-[220px]"
                               style={{
-                                left: `${(activePoint.x / width) * 100}%`,
-                                top: `${Math.max(10, Math.min(activePoint.y, activeTestPoint ? activeTestPoint.y : activePoint.y) - 14)}px`,
+                                left: `${((padX + activeIdx * stepX) / width) * 100}%`,
+                                top: '20px',
                               }}
                             >
-                              <div className="font-extrabold text-teal-300 text-[11px] mb-1.5 pb-1 border-b border-slate-700/80">
-                                {data[activeIdx].fullLabel}
+                              <div className="font-black text-teal-300 text-[11px] mb-2 pb-1.5 border-b border-slate-700/80 flex items-center justify-between">
+                                <span>{activeItem.fullLabel}</span>
+                                <span className="text-[10px] text-teal-400 font-extrabold bg-teal-950/80 px-2 py-0.5 rounded-full border border-teal-800">
+                                  {isRev
+                                    ? formatCentsGHC(activeItem.totalRevenueCents)
+                                    : `${activeItem.totalReports} Labs`}
+                                </span>
                               </div>
+
                               <div className="space-y-1.5 text-[11px]">
-                                {showReportsCurve && (
-                                  <div className="flex items-center justify-between">
-                                    <span className="flex items-center gap-1.5 text-slate-300">
-                                      <span className="w-2 h-2 rounded-full bg-teal-400" />
-                                      <span>Patient Reports:</span>
-                                    </span>
-                                    <span className="font-black text-white">{data[activeIdx].reportsCount}</span>
-                                  </div>
-                                )}
-                                {showTestsCurve && (
-                                  <div className="flex items-center justify-between">
-                                    <span className="flex items-center gap-1.5 text-slate-300">
-                                      <span className="w-2 h-2 rounded-full bg-purple-400" />
-                                      <span>Analytes Tested:</span>
-                                    </span>
-                                    <span className="font-black text-white">{data[activeIdx].testsCount}</span>
-                                  </div>
-                                )}
-                                <div className="pt-1 border-t border-slate-800 flex items-center justify-between text-[10px] text-slate-400">
-                                  <span>Active MLS:</span>
-                                  <span className="font-bold text-amber-300">{data[activeIdx].topScientist}</span>
+                                {/* Cumulative Total Row */}
+                                <div className="flex items-center justify-between pb-1 border-b border-slate-800 text-teal-200 font-bold">
+                                  <span className="flex items-center gap-1.5">
+                                    <span className="w-2.5 h-2.5 rounded-full bg-teal-400" />
+                                    <span>All (Cumulative):</span>
+                                  </span>
+                                  <span className="font-mono font-black text-white">
+                                    {isRev
+                                      ? formatCentsGHC(activeItem.totalRevenueCents)
+                                      : `${activeItem.totalReports} labs`}
+                                  </span>
                                 </div>
+
+                                {/* Per-Scientist Breakdown */}
+                                {activeItem.byScientist.map((sc, scIdx) => {
+                                  const pct = isRev
+                                    ? activeItem.totalRevenueCents > 0
+                                      ? Math.round((sc.revenueCents / activeItem.totalRevenueCents) * 100)
+                                      : 0
+                                    : activeItem.totalReports > 0
+                                      ? Math.round((sc.reportsCount / activeItem.totalReports) * 100)
+                                      : 0;
+
+                                  return (
+                                    <div
+                                      key={scIdx}
+                                      className="flex items-center justify-between text-[10px] text-slate-300 py-0.5"
+                                    >
+                                      <span className="flex items-center gap-1.5">
+                                        <span
+                                          className="w-2 h-2 rounded-full shrink-0"
+                                          style={{ backgroundColor: sc.theme.hex }}
+                                        />
+                                        <span className="text-white font-semibold">{sc.name}</span>
+                                        <span className="text-slate-400 font-mono">({pct}%)</span>
+                                      </span>
+                                      <span className="font-mono text-emerald-400 font-bold">
+                                        {isRev
+                                          ? formatCentsGHC(sc.revenueCents)
+                                          : `${sc.reportsCount} labs`}
+                                      </span>
+                                    </div>
+                                  );
+                                })}
                               </div>
                             </div>
                           )}
 
                           <svg viewBox={`0 0 ${width} ${height}`} className="w-full h-full overflow-visible">
                             <defs>
-                              <linearGradient id="cynoWaveGrad" x1="0" y1="0" x2="0" y2="1">
-                                <stop offset="0%" stopColor="#0d9488" stopOpacity="0.25" />
+                              <linearGradient id="totalLinearGrad" x1="0" y1="0" x2="0" y2="1">
+                                <stop offset="0%" stopColor="#0d9488" stopOpacity="0.22" />
                                 <stop offset="100%" stopColor="#0d9488" stopOpacity="0.0" />
-                              </linearGradient>
-                              <linearGradient id="cynoPurpleGrad" x1="0" y1="0" x2="0" y2="1">
-                                <stop offset="0%" stopColor="#9333ea" stopOpacity="0.18" />
-                                <stop offset="100%" stopColor="#9333ea" stopOpacity="0.0" />
                               </linearGradient>
                             </defs>
 
                             {/* Background Horizontal Grid Lines */}
-                            {[0.25, 0.5, 0.75].map((pct, idx) => (
-                              <line
-                                key={idx}
-                                x1={padX}
-                                y1={25 + pct * (height - 55)}
-                                x2={width - padX}
-                                y2={25 + pct * (height - 55)}
-                                stroke="#e2e8f0"
-                                strokeDasharray="4 4"
-                                strokeWidth="1"
-                              />
+                            {[0.2, 0.45, 0.7, 0.95].map((pct, idx) => (
+                              <g key={idx}>
+                                <line
+                                  x1={padX}
+                                  y1={15 + pct * usableH}
+                                  x2={width - padX}
+                                  y2={15 + pct * usableH}
+                                  stroke="#f1f5f9"
+                                  strokeDasharray="4 4"
+                                  strokeWidth="1"
+                                />
+                              </g>
                             ))}
 
-                            {/* Hover Vertical Guide Line and Pillar */}
-                            {activePoint && (
+                            {/* Hover Vertical Guide Line */}
+                            {activeIdx !== null && (
                               <g>
                                 <rect
-                                  x={activePoint.x - stepX / 2}
-                                  y="15"
+                                  x={padX + activeIdx * stepX - stepX / 2}
+                                  y="10"
                                   width={stepX}
                                   height={height - 35}
                                   fill="#0d9488"
-                                  fillOpacity="0.06"
-                                  rx="8"
+                                  fillOpacity="0.04"
+                                  rx="6"
                                 />
                                 <line
-                                  x1={activePoint.x}
-                                  y1="15"
-                                  x2={activePoint.x}
-                                  y2={height - 24}
+                                  x1={padX + activeIdx * stepX}
+                                  y1={12}
+                                  x2={padX + activeIdx * stepX}
+                                  y2={baseY}
                                   stroke="#0d9488"
                                   strokeDasharray="3 3"
                                   strokeWidth="1.5"
@@ -1345,60 +1522,80 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({
                               </g>
                             )}
 
-                            {/* Area Fill for Curves */}
-                            {showReportsCurve && <path d={repArea} fill="url(#cynoWaveGrad)" />}
-                            {showTestsCurve && <path d={testArea} fill="url(#cynoPurpleGrad)" />}
-
-                            {/* Test Parameters Curve (Violet/Purple) */}
-                            {showTestsCurve && (
-                              <path
-                                d={testPath}
-                                fill="none"
-                                stroke="#9333ea"
-                                strokeWidth="2.5"
-                                strokeLinecap="round"
-                              />
+                            {/* 1. Cumulative Total Area & Linear Path */}
+                            {showTotalSeries && (
+                              <g>
+                                <path d={totalArea} fill="url(#totalLinearGrad)" />
+                                <path
+                                  d={totalPath}
+                                  fill="none"
+                                  stroke="#0d9488"
+                                  strokeWidth="3"
+                                  strokeLinecap="round"
+                                  strokeLinejoin="round"
+                                />
+                              </g>
                             )}
 
-                            {/* Main Reports Curve (Teal) */}
-                            {showReportsCurve && (
-                              <path
-                                d={repPath}
-                                fill="none"
-                                stroke="#0d9488"
-                                strokeWidth="3"
-                                strokeLinecap="round"
-                              />
-                            )}
+                            {/* 2. Scientist Linear Paths */}
+                            {scientistSeriesList.map((sc, scIdx) => {
+                              if (!sc.isVisible) return null;
+                              const path = createLinearPath(sc.points);
+                              const isScHovered = hoveredScientist === sc.name;
 
-                            {/* Data points for Analytes Curve */}
-                            {showTestsCurve &&
-                              testPoints.map((p, idx) => {
-                                const isHov = activeIdx === idx;
+                              return (
+                                <g key={scIdx}>
+                                  <path
+                                    d={path}
+                                    fill="none"
+                                    stroke={sc.theme.hex}
+                                    strokeWidth={isScHovered ? '3.5' : '2.5'}
+                                    strokeLinecap="round"
+                                    strokeLinejoin="round"
+                                    strokeDasharray={scIdx === 1 ? '4 3' : undefined}
+                                    opacity={
+                                      hoveredScientist
+                                        ? isScHovered
+                                          ? 1
+                                          : 0.3
+                                        : 1
+                                    }
+                                    className="transition-all duration-200"
+                                  />
+                                </g>
+                              );
+                            })}
+
+                            {/* 3. Scientist Point Nodes */}
+                            {scientistSeriesList.map((sc, scIdx) => {
+                              if (!sc.isVisible) return null;
+                              return sc.points.map((pt, ptIdx) => {
+                                const isHov = activeIdx === ptIdx;
                                 return (
                                   <circle
-                                    key={`tpt-${idx}`}
-                                    cx={p.x}
-                                    cy={p.y}
-                                    r={isHov ? 6 : 3.5}
-                                    fill={isHov ? '#9333ea' : '#ffffff'}
-                                    stroke="#9333ea"
-                                    strokeWidth={isHov ? 3 : 2}
+                                    key={`sc-pt-${scIdx}-${ptIdx}`}
+                                    cx={pt.x}
+                                    cy={pt.y}
+                                    r={isHov ? 5.5 : 3.5}
+                                    fill={isHov ? sc.theme.hex : '#ffffff'}
+                                    stroke={sc.theme.hex}
+                                    strokeWidth={isHov ? 2.5 : 2}
                                     className="transition-all duration-150"
                                   />
                                 );
-                              })}
+                              });
+                            })}
 
-                            {/* Data points for Reports Curve */}
-                            {showReportsCurve &&
-                              repPoints.map((p, idx) => {
-                                const isHov = activeIdx === idx;
+                            {/* 4. Cumulative Total Point Nodes */}
+                            {showTotalSeries &&
+                              totalPoints.map((pt, ptIdx) => {
+                                const isHov = activeIdx === ptIdx;
                                 return (
                                   <circle
-                                    key={`rpt-${idx}`}
-                                    cx={p.x}
-                                    cy={p.y}
-                                    r={isHov ? 6.5 : 4}
+                                    key={`tot-pt-${ptIdx}`}
+                                    cx={pt.x}
+                                    cy={pt.y}
+                                    r={isHov ? 6 : 4}
                                     fill={isHov ? '#0d9488' : '#ffffff'}
                                     stroke="#0d9488"
                                     strokeWidth={isHov ? 3 : 2.5}
@@ -1415,11 +1612,10 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({
                                 <text
                                   key={idx}
                                   x={x}
-                                  y={height - 4}
+                                  y={height - 6}
                                   textAnchor="middle"
-                                  className={`text-[11px] font-bold font-sans transition-colors ${
-                                    isHov ? 'fill-teal-700 font-black' : 'fill-slate-500'
-                                  }`}
+                                  className={`text-[10px] font-bold font-sans transition-colors ${isHov ? 'fill-teal-700 font-black' : 'fill-slate-500'
+                                    }`}
                                 >
                                   {m.label}
                                 </text>
@@ -1448,24 +1644,140 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({
                       );
                     })()}
                   </div>
+                  {/* Period Scientist Performance & Revenue Leaderboard */}
+                  <div className="mt-5 pt-4 border-t border-slate-100">
+                    <div className="flex items-center justify-between mb-3">
+                      <span className="text-[11px] font-extrabold uppercase tracking-wider text-slate-500">
+                        {timeRange === '7d'
+                          ? 'Last 7 Days Summary'
+                          : timeRange === '30d'
+                            ? 'Last 30 Days Summary'
+                            : timeRange === '1y'
+                              ? 'Last 12 Months Summary'
+                              : 'Last 6 Months Summary'}
+                      </span>
+                      <div className="flex items-center gap-3 text-xs font-bold">
+                        <span className="text-slate-600">
+                          Total Labs:{' '}
+                          <strong className="text-slate-900">
+                            {scientistPeriodPerformance.totalReports}
+                          </strong>
+                        </span>
+                        <span className="text-emerald-700 font-mono">
+                          Total Gross:{' '}
+                          <strong>{formatCentsGHC(scientistPeriodPerformance.totalRevenueCents)}</strong>
+                        </span>
+                      </div>
+                    </div>
+
+                    <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                      {scientistPeriodPerformance.scientists.map((sc, idx) => {
+                        const revPct =
+                          scientistPeriodPerformance.totalRevenueCents > 0
+                            ? Math.round(
+                              (sc.revenueCents / scientistPeriodPerformance.totalRevenueCents) * 100
+                            )
+                            : 0;
+                        const volPct =
+                          scientistPeriodPerformance.totalReports > 0
+                            ? Math.round(
+                              (sc.reportsCount / scientistPeriodPerformance.totalReports) * 100
+                            )
+                            : 0;
+                        const isHovered = hoveredScientist === sc.name;
+
+                        return (
+                          <div
+                            key={sc.user.username || idx}
+                            onMouseEnter={() => setHoveredScientist(sc.name)}
+                            onMouseLeave={() => setHoveredScientist(null)}
+                            className={`p-3.5 rounded-2xl border transition-all cursor-pointer ${isHovered
+                                ? 'bg-teal-50/50 border-teal-300 shadow-xs'
+                                : 'bg-slate-50 border-slate-200/80 hover:bg-slate-100/70'
+                              }`}
+                          >
+                            <div className="flex items-center justify-between mb-2">
+                              <div className="flex items-center space-x-2">
+                                <div
+                                  className={`w-7 h-7 rounded-full text-white font-black text-xs flex items-center justify-center shrink-0 ${sc.theme.avatarBg}`}
+                                >
+                                  {sc.name.charAt(0)}
+                                </div>
+                                <div>
+                                  <div className="text-xs font-black text-slate-900">{sc.name}</div>
+                                  <div className="text-[9px] font-bold text-slate-400 uppercase">
+                                    Medical Scientist
+                                  </div>
+                                </div>
+                              </div>
+                              <div className="text-right">
+                                <div className="text-sm font-black text-emerald-700 font-mono">
+                                  {formatCentsGHC(sc.revenueCents)}
+                                </div>
+                                <div className="text-[10px] font-bold text-slate-500">
+                                  {sc.reportsCount} Labs ({volPct}%)
+                                </div>
+                              </div>
+                            </div>
+
+                            {/* Contribution Progress Bar */}
+                            <div className="w-full bg-slate-200 h-1.5 rounded-full overflow-hidden flex">
+                              <div
+                                className="h-full transition-all duration-300 rounded-full"
+                                style={{
+                                  width: `${revPct}%`,
+                                  backgroundColor: sc.theme.hex,
+                                }}
+                              />
+                            </div>
+                            <div className="flex items-center justify-between text-[9px] text-slate-400 font-bold mt-1">
+                              <span>Share of Revenue: {revPct}%</span>
+                              <span>Avg/Lab: {formatCentsGHC(sc.avgTicketCents)}</span>
+                            </div>
+                          </div>
+                        );
+                      })}
+                    </div>
+                  </div>
                 </div>
               </div>
 
-              {/* Right Chart: Reports by Scientist (Interactive Donut Chart) */}
+              {/* Right Chart: Scientist Contribution Share (Interactive Donut Chart) */}
               <div className="lg:col-span-4 bg-white rounded-3xl p-6 sm:p-7 shadow-sm border border-slate-200/90 flex flex-col justify-between">
                 <div>
                   <div className="flex items-center justify-between pb-3 border-b border-slate-100">
                     <div>
                       <h3 className="text-base font-black text-slate-900">
-                        Scientist Workload
+                        Scientist Share
                       </h3>
                       <p className="text-[11px] text-slate-400 mt-0.5">
-                        Interactive workload share by MLS
+                        Period contribution by Scientist
                       </p>
                     </div>
-                    <span className="text-xs font-bold text-teal-700 bg-teal-50 px-2.5 py-1 rounded-full border border-teal-200">
-                      {scientistBreakdown.total} Total
-                    </span>
+
+                    {/* Donut Metric Toggle Pills */}
+                    <div className="flex items-center bg-slate-100 p-0.5 rounded-full border border-slate-200">
+                      <button
+                        type="button"
+                        onClick={() => setDonutMetric('revenue')}
+                        className={`px-2 py-0.5 rounded-full text-[10px] font-extrabold transition-all cursor-pointer ${donutMetric === 'revenue'
+                            ? 'bg-emerald-600 text-white shadow-2xs'
+                            : 'text-slate-500 hover:text-slate-800'
+                          }`}
+                      >
+                        GH₵
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => setDonutMetric('volume')}
+                        className={`px-2 py-0.5 rounded-full text-[10px] font-extrabold transition-all cursor-pointer ${donutMetric === 'volume'
+                            ? 'bg-teal-700 text-white shadow-2xs'
+                            : 'text-slate-500 hover:text-slate-800'
+                          }`}
+                      >
+                        Labs
+                      </button>
+                    </div>
                   </div>
 
                   {/* SVG Donut Chart with Interactive Segments */}
@@ -1474,7 +1786,10 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({
                       {(() => {
                         const R = 56;
                         const C = 2 * Math.PI * R; // ~351.85
-                        const total = scientistBreakdown.total;
+                        const isRev = donutMetric === 'revenue';
+                        const total = isRev
+                          ? scientistPeriodPerformance.totalRevenueCents
+                          : scientistPeriodPerformance.totalReports;
 
                         if (total === 0) {
                           return (
@@ -1501,7 +1816,7 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({
                                 textAnchor="middle"
                                 className="text-[10px] font-bold fill-slate-400 uppercase tracking-wider"
                               >
-                                Reports
+                                {isRev ? 'GH₵ 0' : 'Reports'}
                               </text>
                             </svg>
                           );
@@ -1522,13 +1837,14 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({
                             />
 
                             {/* Color-Coded Segments with Hover Highlight */}
-                            {scientistBreakdown.items.map((item, idx) => {
-                              const ratio = total > 0 ? item.count / total : 0;
+                            {scientistPeriodPerformance.scientists.map((sc, idx) => {
+                              const val = isRev ? sc.revenueCents : sc.reportsCount;
+                              const ratio = total > 0 ? val / total : 0;
                               const arcLen = ratio * C;
                               const offset = accumulatedOffset;
                               accumulatedOffset += arcLen;
 
-                              const isHovered = hoveredScientist === item.name;
+                              const isHovered = hoveredScientist === sc.name;
                               const isAnyHovered = hoveredScientist !== null;
                               const strokeW = isHovered ? 20 : 16;
                               const opacity = isHovered ? 1 : isAnyHovered ? 0.35 : 1;
@@ -1540,14 +1856,14 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({
                                   cy="70"
                                   r={R}
                                   fill="none"
-                                  stroke={item.theme.hex}
+                                  stroke={sc.theme.hex}
                                   strokeWidth={strokeW}
                                   strokeDasharray={`${Math.max(arcLen - 2, 0)} ${C}`}
                                   strokeDashoffset={-offset}
                                   strokeLinecap="round"
                                   opacity={opacity}
                                   className="transition-all duration-300 cursor-pointer"
-                                  onMouseEnter={() => setHoveredScientist(item.name)}
+                                  onMouseEnter={() => setHoveredScientist(sc.name)}
                                   onMouseLeave={() => setHoveredScientist(null)}
                                 />
                               );
@@ -1558,36 +1874,42 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({
 
                       {/* Dynamic Center Stats Display */}
                       {(() => {
+                        const isRev = donutMetric === 'revenue';
+                        const total = isRev
+                          ? scientistPeriodPerformance.totalRevenueCents
+                          : scientistPeriodPerformance.totalReports;
+
                         const activeItem = hoveredScientist
-                          ? scientistBreakdown.items.find((it) => it.name === hoveredScientist)
+                          ? scientistPeriodPerformance.scientists.find((it) => it.name === hoveredScientist)
                           : null;
 
                         if (activeItem) {
-                          const pct = scientistBreakdown.total > 0
-                            ? Math.round((activeItem.count / scientistBreakdown.total) * 100)
-                            : 0;
+                          const val = isRev ? activeItem.revenueCents : activeItem.reportsCount;
+                          const pct = total > 0 ? Math.round((val / total) * 100) : 0;
                           return (
                             <div className="absolute inset-0 flex flex-col items-center justify-center pointer-events-none transition-all">
-                              <span className="text-2xl font-black text-slate-900 leading-none">
-                                {activeItem.count}
+                              <span className="text-xl font-black text-slate-900 leading-none font-mono">
+                                {isRev ? formatCentsGHC(activeItem.revenueCents) : activeItem.reportsCount}
                               </span>
                               <span className="text-[10px] font-extrabold uppercase tracking-tight mt-1 text-teal-700 truncate max-w-[100px]">
                                 {activeItem.name}
                               </span>
                               <span className="text-[9px] font-bold text-slate-500">
-                                {pct}% of Workload
+                                {pct}% of Period
                               </span>
                             </div>
                           );
                         }
 
                         return (
-                          <div className="absolute inset-0 flex flex-col items-center justify-center pointer-events-none transition-all">
-                            <span className="text-3xl font-black text-slate-900 leading-none">
-                              {scientistBreakdown.total}
+                          <div className="absolute inset-0 flex flex-col items-center justify-center pointer-events-none transition-all text-center px-2">
+                            <span className="text-lg font-black text-slate-900 leading-none font-mono">
+                              {isRev
+                                ? formatCentsGHC(scientistPeriodPerformance.totalRevenueCents)
+                                : scientistPeriodPerformance.totalReports}
                             </span>
-                            <span className="text-[10px] font-extrabold text-slate-400 uppercase tracking-wider mt-0.5">
-                              Total Reports
+                            <span className="text-[10px] font-extrabold text-slate-400 uppercase tracking-wider mt-1">
+                              {isRev ? 'Period Billings' : 'Total Labs'}
                             </span>
                           </div>
                         );
@@ -1596,34 +1918,38 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({
 
                     {/* Interactive Color-coded Legend */}
                     <div className="w-full mt-4 space-y-2">
-                      {scientistBreakdown.items.map((item, idx) => {
-                        const pct = scientistBreakdown.total > 0
-                          ? Math.round((item.count / scientistBreakdown.total) * 100)
-                          : 0;
-                        const isHovered = hoveredScientist === item.name;
+                      {scientistPeriodPerformance.scientists.map((sc, idx) => {
+                        const isRev = donutMetric === 'revenue';
+                        const total = isRev
+                          ? scientistPeriodPerformance.totalRevenueCents
+                          : scientistPeriodPerformance.totalReports;
+                        const val = isRev ? sc.revenueCents : sc.reportsCount;
+                        const pct = total > 0 ? Math.round((val / total) * 100) : 0;
+                        const isHovered = hoveredScientist === sc.name;
 
                         return (
                           <div
                             key={idx}
-                            onMouseEnter={() => setHoveredScientist(item.name)}
+                            onMouseEnter={() => setHoveredScientist(sc.name)}
                             onMouseLeave={() => setHoveredScientist(null)}
-                            className={`flex items-center justify-between text-xs p-2 rounded-xl border transition-all cursor-pointer ${
-                              isHovered
+                            className={`flex items-center justify-between text-xs p-2 rounded-xl border transition-all cursor-pointer ${isHovered
                                 ? 'bg-slate-100 border-teal-400 shadow-2xs'
                                 : 'border-transparent hover:bg-slate-50'
-                            }`}
+                              }`}
                           >
                             <div className="flex items-center space-x-2.5 truncate">
                               <span
                                 className="w-3 h-3 rounded-full shrink-0 shadow-2xs"
-                                style={{ backgroundColor: item.theme.hex }}
+                                style={{ backgroundColor: sc.theme.hex }}
                               />
                               <span className="font-extrabold text-slate-800 truncate">
-                                {item.name}
+                                {sc.name}
                               </span>
                             </div>
                             <div className="flex items-center space-x-2 font-mono shrink-0">
-                              <span className="font-bold text-slate-900">{item.count}</span>
+                              <span className="font-bold text-slate-900">
+                                {isRev ? formatCentsGHC(sc.revenueCents) : `${sc.reportsCount} labs`}
+                              </span>
                               <span className="text-slate-400 text-[10px]">({pct}%)</span>
                             </div>
                           </div>
@@ -1635,35 +1961,120 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({
               </div>
             </div>
 
-            {/* Test Type Distribution Grid */}
-            <div className="bg-white  rounded-[2rem] p-6 sm:p-7 shadow-sm border border-slate-100 ">
-              <h3 className="text-xs font-bold uppercase tracking-wider text-slate-600  mb-4 flex items-center gap-2">
-                <FileText className="w-4 h-4 text-teal-600 dark:text-teal-400" />
-                <span>Test Panels Completed &bull; Quick Filter</span>
-              </h3>
-              <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-6 gap-3">
-                {catalog.map((t) => {
-                  const count = stats.testCounts[t.id] || 0;
-                  const isSelected = selectedTestType === t.id;
-                  return (
-                    <div
-                      key={t.id}
-                      onClick={() => setSelectedTestType(isSelected ? 'All' : t.id)}
-                      className={`p-3.5 rounded-2xl border text-left cursor-pointer transition-all ${
-                        isSelected
-                          ? 'border-teal-600 bg-teal-50 dark:bg-teal-950/50 shadow-xs ring-1 ring-teal-500/30'
-                          : 'border-slate-100  hover:bg-slate-50 dark:hover:bg-slate-800/60'
-                      }`}
+            {/* Test Type Distribution Grid - Horizontal Layout: test | amount | number done */}
+            <div className="bg-white rounded-[2rem] p-6 sm:p-7 shadow-sm border border-slate-100">
+              <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 mb-4">
+                <div className="flex items-center gap-3">
+                  <h3 className="text-xs font-bold uppercase tracking-wider text-slate-600 flex items-center gap-2">
+                    <FileText className="w-4 h-4 text-teal-600" />
+                    <span>Test Panels &bull; Billings &bull; Quick Filter</span>
+                  </h3>
+                  {selectedTestType !== 'All' && (
+                    <button
+                      type="button"
+                      onClick={() => setSelectedTestType('All')}
+                      className="text-[11px] font-black text-teal-800 bg-teal-50 hover:bg-teal-100 px-3 py-1 rounded-full border border-teal-200 transition-all cursor-pointer flex items-center gap-1 shadow-2xs"
                     >
-                      <div className="text-[11px] font-bold text-slate-700  truncate" title={t.name}>
-                        {t.name}
-                      </div>
-                      <div className="text-lg font-black text-slate-900  mt-1">
-                        {count}
-                      </div>
-                    </div>
-                  );
-                })}
+                      <span>Filtered by: {catalog.find((t) => t.id === selectedTestType)?.name || selectedTestType}</span>
+                      <span className="text-teal-500 hover:text-teal-900">&times;</span>
+                    </button>
+                  )}
+                </div>
+
+                <div className="flex items-center gap-2">
+                  <span className="text-xs font-extrabold text-emerald-700 bg-emerald-50 px-3 py-1 rounded-full border border-emerald-200">
+                    Total Period Billings: {formatCentsGHC(stats.periodRevenueCents)}
+                  </span>
+                  <span className="text-xs font-bold text-slate-500 bg-slate-100 px-2.5 py-1 rounded-full">
+                    {catalog.length} Available Tests
+                  </span>
+                </div>
+              </div>
+
+              {/* Horizontal Table: test | amount | number done */}
+              <div className="overflow-hidden rounded-2xl border border-slate-200/90 shadow-2xs bg-white">
+                <div className="overflow-x-auto max-h-[420px] overflow-y-auto">
+                  <table className="w-full text-left border-collapse">
+                    <thead className="sticky top-0 bg-slate-50/95 backdrop-blur-sm z-10 border-b border-slate-200 text-[11px] font-black uppercase tracking-wider text-slate-600">
+                      <tr>
+                        <th className="py-3 px-5">Test</th>
+                        <th className="py-3 px-5">Amount</th>
+                        <th className="py-3 px-5 text-right">Number Done</th>
+                      </tr>
+                    </thead>
+                    <tbody className="divide-y divide-slate-100 text-xs">
+                      {catalog.map((t) => {
+                        const count = stats.testCounts[t.id] || 0;
+                        const rev = stats.testRevenues[t.id] || 0;
+                        const isSelected = selectedTestType === t.id;
+
+                        return (
+                          <tr
+                            key={t.id}
+                            onClick={() => setSelectedTestType(isSelected ? 'All' : t.id)}
+                            className={`transition-colors cursor-pointer select-none ${isSelected
+                                ? 'bg-teal-50/90 hover:bg-teal-100/80 font-bold'
+                                : 'hover:bg-slate-50'
+                              }`}
+                          >
+                            {/* 1. Test Name & Category */}
+                            <td className="py-3 px-5">
+                              <div className="flex items-center space-x-3">
+                                <span
+                                  className={`w-2.5 h-2.5 rounded-full shrink-0 ${isSelected
+                                      ? 'bg-teal-600 ring-2 ring-teal-400'
+                                      : count > 0
+                                        ? 'bg-emerald-500'
+                                        : 'bg-slate-300'
+                                    }`}
+                                />
+                                <div>
+                                  <div
+                                    className={`text-xs ${isSelected
+                                        ? 'text-teal-950 font-black'
+                                        : 'text-slate-900 font-bold'
+                                      }`}
+                                  >
+                                    {t.name}
+                                  </div>
+                                  <div className="text-[10px] text-slate-400 font-medium">
+                                    {t.category || 'General Diagnostic'}
+                                  </div>
+                                </div>
+                              </div>
+                            </td>
+
+                            {/* 2. Amount (Price & Total Generated) */}
+                            <td className="py-3 px-5">
+                              <div className="flex items-center space-x-2.5">
+                                <span className="font-mono font-black text-slate-900 text-xs">
+                                  {formatCentsGHC(t.priceCents || 0)}
+                                </span>
+                                {count > 0 && (
+                                  <span className="text-[10px] font-extrabold text-emerald-700 bg-emerald-50 px-2.5 py-0.5 rounded-full border border-emerald-200 font-mono">
+                                    Total: {formatCentsGHC(rev)}
+                                  </span>
+                                )}
+                              </div>
+                            </td>
+
+                            {/* 3. Number Done */}
+                            <td className="py-3 px-5 text-right">
+                              <span
+                                className={`inline-flex items-center px-3 py-1 rounded-full text-xs font-black ${count > 0
+                                    ? 'bg-emerald-100 text-emerald-800 border border-emerald-300 shadow-2xs font-mono'
+                                    : 'bg-slate-100 text-slate-400 border border-slate-200'
+                                  }`}
+                              >
+                                {count} {count === 1 ? 'done' : 'done'}
+                              </span>
+                            </td>
+                          </tr>
+                        );
+                      })}
+                    </tbody>
+                  </table>
+                </div>
               </div>
             </div>
 
@@ -1988,23 +2399,49 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({
               </div>
             </div>
 
-            {/* Test Selector and Add Parameter */}
-            <div className="flex flex-wrap items-center justify-between gap-3 bg-slate-50  p-4 rounded-2xl border border-slate-200 ">
-              <div className="flex items-center space-x-3">
-                <label className="text-xs font-bold text-slate-600  uppercase tracking-wider">
-                  Select Test to Edit:
-                </label>
-                <select
-                  value={selectedCatalogTestId}
-                  onChange={(e) => setSelectedCatalogTestId(e.target.value)}
-                  className="px-3.5 py-1.5 bg-white  border border-slate-300  rounded-full text-xs sm:text-sm font-bold text-slate-900  focus:outline-none focus:ring-2 focus:ring-teal-500/30 focus:border-teal-600"
-                >
-                  {localCatalog.map((t) => (
-                    <option key={t.id} value={t.id}>
-                      {t.name}
-                    </option>
-                  ))}
-                </select>
+            {/* Test Selector, Price Editor and Add Parameter */}
+            <div className="flex flex-wrap items-center justify-between gap-3 bg-slate-50 p-4 rounded-2xl border border-slate-200">
+              <div className="flex flex-wrap items-center gap-3">
+                <div className="flex items-center space-x-2">
+                  <label className="text-xs font-bold text-slate-600 uppercase tracking-wider">
+                    Select Test:
+                  </label>
+                  <select
+                    value={selectedCatalogTestId}
+                    onChange={(e) => setSelectedCatalogTestId(e.target.value)}
+                    className="px-3.5 py-1.5 bg-white border border-slate-300 rounded-full text-xs sm:text-sm font-bold text-slate-900 focus:outline-none focus:ring-2 focus:ring-teal-500/30 focus:border-teal-600"
+                  >
+                    {localCatalog.map((t) => (
+                      <option key={t.id} value={t.id}>
+                        {t.name}
+                      </option>
+                    ))}
+                  </select>
+                </div>
+
+                {/* Price (GH₵) Editor */}
+                <div className="flex items-center space-x-1.5 bg-white px-3 py-1 rounded-full border border-slate-300 shadow-2xs">
+                  <span className="text-[11px] font-extrabold text-slate-600 uppercase tracking-wider">
+                    Price (GH₵):
+                  </span>
+                  <input
+                    type="number"
+                    step="0.01"
+                    min="0"
+                    value={currentTestDef.priceCents !== undefined ? (currentTestDef.priceCents / 100) : ''}
+                    onChange={(e) => {
+                      const val = parseFloat(e.target.value);
+                      const cents = isNaN(val) ? 0 : Math.round(val * 100);
+                      const updated = localCatalog.map((t) =>
+                        t.id === currentTestDef.id ? { ...t, priceCents: cents } : t
+                      );
+                      setLocalCatalog(updated);
+                      onSaveCatalog(updated);
+                    }}
+                    className="w-20 px-2 py-0.5 rounded text-xs font-black text-emerald-700 bg-emerald-50/50 border border-emerald-200 focus:outline-none focus:ring-1 focus:ring-emerald-500"
+                    placeholder="0.00"
+                  />
+                </div>
               </div>
 
               <div className="flex items-center space-x-2">
@@ -2240,9 +2677,8 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({
                     <div className="flex items-center justify-between">
                       <div className="flex items-center space-x-2.5">
                         <div
-                          className={`w-8 h-8 rounded-xl flex items-center justify-center font-bold text-white text-xs ${
-                            isAdmin ? 'bg-slate-900' : 'bg-teal-700'
-                          }`}
+                          className={`w-8 h-8 rounded-xl flex items-center justify-center font-bold text-white text-xs ${isAdmin ? 'bg-slate-900' : 'bg-teal-700'
+                            }`}
                         >
                           {isAdmin ? <Shield className="w-4 h-4" /> : u.displayName.charAt(0)}
                         </div>
@@ -2598,9 +3034,9 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({
             </div>
 
             <form onSubmit={handleSaveNewLabTest} className="p-6 overflow-y-auto space-y-4 flex-1">
-              <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+              <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
                 <div>
-                  <label className="block text-xs font-bold text-slate-700  mb-1">
+                  <label className="block text-xs font-bold text-slate-700 mb-1">
                     Lab Test Name <span className="text-red-500">*</span>
                   </label>
                   <input
@@ -2609,11 +3045,11 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({
                     placeholder="e.g. LIPID PROFILE"
                     value={newTestName}
                     onChange={(e) => setNewTestName(e.target.value)}
-                    className="w-full px-4 py-2.5 rounded-full border border-slate-300  bg-white  text-slate-900  text-xs font-bold focus:outline-none focus:ring-2 focus:ring-teal-500/30 focus:border-teal-600"
+                    className="w-full px-4 py-2.5 rounded-full border border-slate-300 bg-white text-slate-900 text-xs font-bold focus:outline-none focus:ring-2 focus:ring-teal-500/30 focus:border-teal-600"
                   />
                 </div>
                 <div>
-                  <label className="block text-xs font-bold text-slate-700  mb-1">
+                  <label className="block text-xs font-bold text-slate-700 mb-1">
                     Category
                   </label>
                   <input
@@ -2621,7 +3057,21 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({
                     placeholder="e.g. Clinical Chemistry"
                     value={newTestCategory}
                     onChange={(e) => setNewTestCategory(e.target.value)}
-                    className="w-full px-4 py-2.5 rounded-full border border-slate-300  bg-white  text-slate-900  text-xs focus:outline-none focus:ring-2 focus:ring-teal-500/30 focus:border-teal-600"
+                    className="w-full px-4 py-2.5 rounded-full border border-slate-300 bg-white text-slate-900 text-xs focus:outline-none focus:ring-2 focus:ring-teal-500/30 focus:border-teal-600"
+                  />
+                </div>
+                <div>
+                  <label className="block text-xs font-bold text-slate-700 mb-1">
+                    Price (GH₵)
+                  </label>
+                  <input
+                    type="number"
+                    step="0.01"
+                    min="0"
+                    placeholder="80.00"
+                    value={newTestPrice}
+                    onChange={(e) => setNewTestPrice(e.target.value)}
+                    className="w-full px-4 py-2.5 rounded-full border border-slate-300 bg-white text-slate-900 text-xs font-bold focus:outline-none focus:ring-2 focus:ring-teal-500/30 focus:border-teal-600"
                   />
                 </div>
               </div>
