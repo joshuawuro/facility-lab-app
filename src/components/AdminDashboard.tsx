@@ -1,4 +1,4 @@
-import React, { useState, useMemo } from 'react';
+import React, { useState, useMemo, useEffect } from 'react';
 import {
   Shield,
   BarChart3,
@@ -39,6 +39,10 @@ import { exportBackupJSON, importBackupJSON } from '../utils/storage';
 import { useToast } from '../context/ToastContext';
 import { getDailyRevenueCents, getTotalGrossRevenueCents, formatCentsGHC, getTestPriceCents, getReportRevenueCents } from '../utils/revenue';
 import { RevenueCard } from './RevenueCard';
+import { fetchAuditLogs, AuditLogEntry } from '../services/auditService';
+import { addDoctorSupabase, deleteDoctorSupabase } from '../services/doctorsService';
+import { updateReferenceRangeSupabase } from '../services/catalogService';
+import { fetchStaffProfiles, updateStaffProfile } from '../services/authService';
 
 // Color Coding Palette for Laboratory Scientists
 export interface ScientistColorTheme {
@@ -162,8 +166,6 @@ interface AdminDashboardProps {
   catalog: LabTest[];
   onSaveCatalog: (catalog: LabTest[]) => void;
   onResetCatalog: () => void;
-  users: UserAccount[];
-  onSaveUsers: (users: UserAccount[]) => void;
   facilitySettings: FacilitySettings;
   onSaveFacilitySettings: (settings: FacilitySettings) => void;
   onLogout: () => void;
@@ -176,15 +178,57 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({
   catalog,
   onSaveCatalog,
   onResetCatalog,
-  users,
-  onSaveUsers,
   facilitySettings,
   onSaveFacilitySettings,
   onLogout,
   onViewReport,
 }) => {
   const { showSuccess, showError, showWarning, askConfirm } = useToast();
-  const [activeAdminTab, setActiveAdminTab] = useState<'stats' | 'catalog' | 'doctors' | 'scientists' | 'facility' | 'backup'>('stats');
+  const [activeAdminTab, setActiveAdminTab] = useState<'stats' | 'catalog' | 'doctors' | 'scientists' | 'facility' | 'backup' | 'audit'>('stats');
+
+  // Audit Logs State
+  const [auditLogs, setAuditLogs] = useState<AuditLogEntry[]>([]);
+  const [loadingAuditLogs, setLoadingAuditLogs] = useState<boolean>(false);
+
+  // Doctors Management State
+  const [showAddDoctorModal, setShowAddDoctorModal] = useState<boolean>(false);
+  const [newDoctorName, setNewDoctorName] = useState<string>('');
+
+  const loadAuditLogs = async () => {
+    setLoadingAuditLogs(true);
+    try {
+      const logs = await fetchAuditLogs(100);
+      setAuditLogs(logs);
+    } catch (err) {
+      console.error('Failed to load audit logs:', err);
+    } finally {
+      setLoadingAuditLogs(false);
+    }
+  };
+
+  const handleAddDoctor = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!newDoctorName.trim()) return;
+    const updated = await addDoctorSupabase(newDoctorName);
+    onSaveFacilitySettings({ ...facilitySettings, doctors: updated });
+    setNewDoctorName('');
+    setShowAddDoctorModal(false);
+    showSuccess(`Doctor "${newDoctorName.trim()}" added to directory.`);
+  };
+
+  const handleDeleteDoctor = async (docName: string) => {
+    const confirmDelete = await askConfirm({
+      title: 'Remove Referring Doctor?',
+      message: `Are you sure you want to remove "${docName}" from the referring doctor list?`,
+      confirmText: 'Remove Doctor',
+      isDestructive: true,
+    });
+    if (!confirmDelete) return;
+
+    const updated = await deleteDoctorSupabase(docName);
+    onSaveFacilitySettings({ ...facilitySettings, doctors: updated });
+    showSuccess(`Doctor "${docName}" removed.`);
+  };
 
   // Statistics Filter States
   const [searchTerm, setSearchTerm] = useState('');
@@ -231,13 +275,20 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({
   const [newParamFemaleMax, setNewParamFemaleMax] = useState('');
 
   // Scientists Management State
-  const [localUsers, setLocalUsers] = useState<UserAccount[]>([...users]);
+  const [localUsers, setLocalUsers] = useState<UserAccount[]>([]);
   const [showAddScientistModal, setShowAddScientistModal] = useState(false);
   const [newScientistUsername, setNewScientistUsername] = useState('');
   const [newScientistName, setNewScientistName] = useState('');
-  const [newScientistPassword, setNewScientistPassword] = useState('password');
   const [newScientistTitle, setNewScientistTitle] = useState('Medical Laboratory Scientist');
   const [userSavedAlert, setUserSavedAlert] = useState(false);
+
+  useEffect(() => {
+    fetchStaffProfiles().then((staff) => {
+      if (staff && staff.length > 0) {
+        setLocalUsers(staff);
+      }
+    });
+  }, []);
 
   // Facility Settings State
   const [localFacility, setLocalFacility] = useState<FacilitySettings>({ ...facilitySettings });
@@ -344,6 +395,15 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({
     customStartDate,
     customEndDate,
   ]);
+
+  // Successfully saved / finalized reports from scientists
+  const savedReportsCount = useMemo(() => {
+    return reports.filter((r) => r.status === 'completed' || !r.status).length;
+  }, [reports]);
+
+  const periodSavedCount = useMemo(() => {
+    return filteredReports.filter((r) => r.status === 'completed' || !r.status).length;
+  }, [filteredReports]);
 
   // Statistics calculation per scientist and financial revenue
   const stats = useMemo(() => {
@@ -673,33 +733,30 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({
   const handleAddScientist = (e: React.FormEvent) => {
     e.preventDefault();
     if (!newScientistUsername.trim() || !newScientistName.trim()) {
-      showWarning('Please enter a username and scientist name.');
+      showWarning('Please enter an email/username and scientist name.');
       return;
     }
 
     const usernameClean = newScientistUsername.trim();
     if (localUsers.some((u) => u.username.toLowerCase() === usernameClean.toLowerCase())) {
-      showError('A user with this username already exists.');
+      showError('A user with this username/email already exists.');
       return;
     }
 
     const newUser: UserAccount = {
       username: usernameClean,
       displayName: newScientistName.trim(),
-      password: newScientistPassword || 'password',
       role: 'scientist',
       title: newScientistTitle.trim() || 'Medical Laboratory Scientist',
     };
 
     const updated = [...localUsers, newUser];
     setLocalUsers(updated);
-    onSaveUsers(updated);
 
     setNewScientistUsername('');
     setNewScientistName('');
-    setNewScientistPassword('password');
     setShowAddScientistModal(false);
-    showSuccess(`Scientist "${newUser.displayName}" added successfully!`);
+    showSuccess(`Scientist "${newUser.displayName}" added. Ensure user account is also registered in Supabase.`);
   };
 
   const handleRemoveScientist = async (usernameToRemove: string) => {
@@ -709,15 +766,14 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({
     }
     const confirmed = await askConfirm({
       title: 'Remove Scientist Account',
-      message: `Are you sure you want to remove scientist account "${usernameToRemove}"?`,
+      message: `Are you sure you want to remove scientist account "${usernameToRemove}" from the directory?`,
       confirmText: 'Remove Scientist',
       isDestructive: true,
     });
     if (confirmed) {
       const updated = localUsers.filter((u) => u.username !== usernameToRemove);
       setLocalUsers(updated);
-      onSaveUsers(updated);
-      showSuccess(`Scientist "${usernameToRemove}" removed.`);
+      showSuccess(`Scientist "${usernameToRemove}" removed from directory.`);
     }
   };
 
@@ -727,10 +783,13 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({
     setLocalUsers(updated);
   };
 
-  const handleSaveAllScientists = () => {
-    onSaveUsers(localUsers);
+  const handleSaveAllScientists = async () => {
+    for (const u of localUsers) {
+      await updateStaffProfile(u.username, u.displayName, u.title);
+    }
     setUserSavedAlert(true);
     setTimeout(() => setUserSavedAlert(false), 3000);
+    showSuccess('Staff profiles synchronized with Supabase.');
   };
 
   // --- LAB TEST & PARAMETER MANAGEMENT HANDLERS ---
@@ -1024,6 +1083,17 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({
               </button>
 
               <button
+                onClick={() => setActiveAdminTab('doctors')}
+                className={`px-5 py-2.5 rounded-xl text-xs font-black flex items-center space-x-2 transition-all cursor-pointer ${activeAdminTab === 'doctors'
+                    ? 'bg-teal-700 text-white shadow-md shadow-teal-700/25 ring-1 ring-teal-500/40'
+                    : 'text-slate-600 hover:text-slate-900 hover:bg-slate-200/70'
+                  }`}
+              >
+                <User className="w-3.5 h-3.5" />
+                <span>Doctors ({(facilitySettings.doctors || []).length})</span>
+              </button>
+
+              <button
                 onClick={() => setActiveAdminTab('facility')}
                 className={`px-5 py-2.5 rounded-xl text-xs font-black flex items-center space-x-2 transition-all cursor-pointer ${activeAdminTab === 'facility'
                     ? 'bg-teal-700 text-white shadow-md shadow-teal-700/25 ring-1 ring-teal-500/40'
@@ -1032,6 +1102,20 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({
               >
                 <Building className="w-3.5 h-3.5" />
                 <span>Header &amp; Logo</span>
+              </button>
+
+              <button
+                onClick={() => {
+                  setActiveAdminTab('audit');
+                  loadAuditLogs();
+                }}
+                className={`px-5 py-2.5 rounded-xl text-xs font-black flex items-center space-x-2 transition-all cursor-pointer ${activeAdminTab === 'audit'
+                    ? 'bg-teal-700 text-white shadow-md shadow-teal-700/25 ring-1 ring-teal-500/40'
+                    : 'text-slate-600 hover:text-slate-900 hover:bg-slate-200/70'
+                  }`}
+              >
+                <Shield className="w-3.5 h-3.5" />
+                <span>Audit Trail</span>
               </button>
 
               <button
@@ -1093,8 +1177,8 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({
         {/* ======================================================== */}
         {activeAdminTab === 'stats' && (
           <div className="space-y-7">
-            {/* 5 Cyno-styled Stat Cards including Daily & Total Gross Billings */}
-            <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 lg:grid-cols-5 gap-4 sm:gap-5">
+            {/* 4 Cyno-styled Stat Cards including Daily & Total Gross Billings and Saved Reports */}
+            <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4 sm:gap-5">
               {/* Card 1: Daily Gross Revenue (Today) */}
               <RevenueCard
                 title="Daily Gross Revenue"
@@ -1127,47 +1211,31 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({
                 </div>
               </div>
 
-              {/* Card 3: Total Reports Processed */}
+              {/* Card 3: Successfully Saved Reports (Finalized by Scientists) */}
               <div className="bg-white rounded-3xl p-6 shadow-sm border border-slate-200/90 flex flex-col justify-between transition-all hover:shadow-md">
                 <div className="flex items-start justify-between">
-                  <div className="w-12 h-12 rounded-full bg-teal-50 text-teal-600 flex items-center justify-center shadow-xs">
-                    <Activity className="w-6 h-6" />
-                  </div>
-                  <span className="inline-flex items-center space-x-1 px-2.5 py-1 rounded-full text-[11px] font-black bg-emerald-50 text-emerald-600 border border-emerald-200">
-                    <span>{selectedDateFilter === 'all' ? 'All-Time' : 'Period'}</span>
-                  </span>
-                </div>
-                <div className="mt-4">
-                  <div className="text-3xl sm:text-4xl font-black text-slate-900 tracking-tight">
-                    {stats.total.toLocaleString()}
-                  </div>
-                  <p className="text-xs font-semibold text-slate-500 mt-1">
-                    Total Reports Processed
-                  </p>
-                </div>
-              </div>
-
-              {/* Card 4: All-Time Patient Reports */}
-              <div className="bg-white rounded-3xl p-6 shadow-sm border border-slate-200/90 flex flex-col justify-between transition-all hover:shadow-md">
-                <div className="flex items-start justify-between">
-                  <div className="w-12 h-12 rounded-full bg-sky-50 text-sky-600 flex items-center justify-center shadow-xs">
+                  <div className="w-12 h-12 rounded-full bg-emerald-50 text-emerald-600 flex items-center justify-center shadow-xs">
                     <FileCheck className="w-6 h-6" />
                   </div>
-                  <span className="inline-flex items-center space-x-1 px-2.5 py-1 rounded-full text-[11px] font-black bg-sky-50 text-sky-600 border border-sky-200">
-                    <span>All-Time</span>
+                  <span className="inline-flex items-center space-x-1 px-2.5 py-1 rounded-full text-[11px] font-black bg-emerald-50 text-emerald-700 border border-emerald-200">
+                    <CheckCircle2 className="w-3 h-3 text-emerald-600" />
+                    <span>Saved & Finalized</span>
                   </span>
                 </div>
                 <div className="mt-4">
                   <div className="text-3xl sm:text-4xl font-black text-slate-900 tracking-tight">
-                    {reports.length.toLocaleString()}
+                    {savedReportsCount.toLocaleString()}
                   </div>
                   <p className="text-xs font-semibold text-slate-500 mt-1">
-                    Total Patient Reports
+                    Successfully Saved Reports
+                  </p>
+                  <p className="text-[11px] font-medium text-emerald-600 mt-0.5">
+                    {periodSavedCount} {periodSavedCount === 1 ? 'report' : 'reports'} in active filter
                   </p>
                 </div>
               </div>
 
-              {/* Card 5: Active Lab Scientists */}
+              {/* Card 4: Active Lab Scientists */}
               <div className="bg-white rounded-3xl p-6 shadow-sm border border-slate-200/90 flex flex-col justify-between transition-all hover:shadow-md">
                 <div className="flex items-start justify-between">
                   <div className="w-12 h-12 rounded-full bg-emerald-50 dark:bg-emerald-950/60 text-emerald-600 dark:text-emerald-400 flex items-center justify-center shadow-xs">
@@ -2719,14 +2787,11 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({
 
                       <div>
                         <label className="block text-[10px] font-bold text-slate-500 uppercase">
-                          Password
+                          Account Access
                         </label>
-                        <input
-                          type="text"
-                          value={u.password || ''}
-                          onChange={(e) => handleUpdateScientist(idx, { password: e.target.value })}
-                          className="w-full px-2.5 py-1.5 rounded-lg border border-slate-300  bg-white  text-slate-900  text-xs font-mono"
-                        />
+                        <div className="text-[11px] font-semibold text-emerald-700 bg-emerald-50 px-2.5 py-1 rounded-lg border border-emerald-200">
+                          Supabase Auth Connected
+                        </div>
                       </div>
 
                       <div>
@@ -2894,11 +2959,11 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({
         {/* TAB 5: SYSTEM BACKUP & TRANSFER */}
         {/* ======================================================== */}
         {activeAdminTab === 'backup' && (
-          <div className="bg-white/90 /90 backdrop-blur-md rounded-[2rem] shadow-xs border border-slate-200/80  p-6 sm:p-8 space-y-6">
+          <div className="bg-white/90 backdrop-blur-md rounded-[2rem] shadow-xs border border-slate-200/80 p-6 sm:p-8 space-y-6">
             <div className="max-w-xl space-y-6">
               <div>
-                <h3 className="text-sm font-bold text-slate-900  mb-1">Export Full Lab Database</h3>
-                <p className="text-xs text-slate-500  mb-3">
+                <h3 className="text-sm font-bold text-slate-900 mb-1">Export Full Lab Database</h3>
+                <p className="text-xs text-slate-500 mb-3">
                   Download a JSON file containing all facility settings, test definitions, scientist accounts, and archived patient reports.
                 </p>
                 <button
@@ -2911,18 +2976,175 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({
                 </button>
               </div>
 
-              <div className="pt-6 border-t border-slate-200 ">
-                <h3 className="text-sm font-bold text-slate-900  mb-1">Restore from Backup</h3>
-                <p className="text-xs text-slate-500  mb-3">
+              <div className="pt-6 border-t border-slate-200">
+                <h3 className="text-sm font-bold text-slate-900 mb-1">Restore from Backup</h3>
+                <p className="text-xs text-slate-500 mb-3">
                   Upload a JSON database backup file to restore records on this workstation.
                 </p>
-                <label className="cursor-pointer inline-flex items-center space-x-2 px-5 py-2.5 bg-slate-100  hover:bg-slate-200 dark:hover:bg-slate-750 text-slate-800  rounded-full text-xs font-bold border border-slate-300 ">
+                <label className="cursor-pointer inline-flex items-center space-x-2 px-5 py-2.5 bg-slate-100 hover:bg-slate-200 text-slate-800 rounded-full text-xs font-bold border border-slate-300">
                   <UploadCloud className="w-4 h-4 text-teal-600" />
                   <span>Choose Backup File (.JSON)</span>
                   <input type="file" accept=".json,application/json" onChange={handleImportBackup} className="hidden" />
                 </label>
               </div>
             </div>
+          </div>
+        )}
+
+        {/* ======================================================== */}
+        {/* TAB 6: DOCTORS DIRECTORY */}
+        {/* ======================================================== */}
+        {activeAdminTab === 'doctors' && (
+          <div className="bg-white/90 backdrop-blur-md rounded-[2rem] shadow-xs border border-slate-200/80 p-6 sm:p-8 space-y-6">
+            <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 pb-4 border-b border-slate-200">
+              <div>
+                <h3 className="text-base font-extrabold text-slate-900 flex items-center gap-2">
+                  <User className="w-5 h-5 text-teal-700" />
+                  <span>Referring Doctors Directory</span>
+                </h3>
+                <p className="text-xs text-slate-500 mt-0.5">
+                  Manage external physicians and clinics referring patients for lab investigations.
+                </p>
+              </div>
+              <button
+                type="button"
+                onClick={() => setShowAddDoctorModal(true)}
+                className="px-4 py-2 bg-teal-700 hover:bg-teal-800 text-white rounded-full text-xs font-bold flex items-center space-x-1.5 shadow-xs cursor-pointer"
+              >
+                <Plus className="w-4 h-4" />
+                <span>+ Add Referring Doctor</span>
+              </button>
+            </div>
+
+            <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 lg:grid-cols-4 gap-4">
+              {(facilitySettings.doctors || []).map((doc) => (
+                <div
+                  key={doc}
+                  className="p-4 rounded-2xl border border-slate-200/80 bg-slate-50 flex items-center justify-between gap-3 shadow-2xs"
+                >
+                  <div className="flex items-center gap-3 min-w-0">
+                    <div className="w-9 h-9 rounded-full bg-teal-100 text-teal-800 flex items-center justify-center font-bold text-xs shrink-0">
+                      Dr
+                    </div>
+                    <div className="truncate">
+                      <div className="font-bold text-xs text-slate-900 truncate">{doc}</div>
+                      <div className="text-[10px] text-slate-400">Referring Physician</div>
+                    </div>
+                  </div>
+                  {doc !== 'Self' && (
+                    <button
+                      type="button"
+                      onClick={() => handleDeleteDoctor(doc)}
+                      className="p-1.5 text-slate-400 hover:text-rose-600 rounded-lg hover:bg-rose-50 transition-colors cursor-pointer"
+                      title="Remove Doctor"
+                    >
+                      <Trash2 className="w-4 h-4" />
+                    </button>
+                  )}
+                </div>
+              ))}
+            </div>
+          </div>
+        )}
+
+        {/* ======================================================== */}
+        {/* TAB 7: IMMUTABLE AUDIT TRAIL */}
+        {/* ======================================================== */}
+        {activeAdminTab === 'audit' && (
+          <div className="bg-white/90 backdrop-blur-md rounded-[2rem] shadow-xs border border-slate-200/80 p-6 sm:p-8 space-y-6">
+            <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 pb-4 border-b border-slate-200">
+              <div>
+                <div className="flex items-center gap-2">
+                  <h3 className="text-base font-extrabold text-slate-900">
+                    Clinical Audit Trail
+                  </h3>
+                  <span className="px-2.5 py-0.5 rounded-full text-[10px] font-black uppercase tracking-wider bg-emerald-100 text-emerald-800 border border-emerald-300">
+                    Append-Only &bull; Immutable
+                  </span>
+                </div>
+                <p className="text-xs text-slate-500 mt-1">
+                  Strictly records report saves, PDF exports, reference range changes, doctor directory modifications, and logins. RLS policy prevents modification or deletion.
+                </p>
+              </div>
+              <button
+                type="button"
+                onClick={loadAuditLogs}
+                disabled={loadingAuditLogs}
+                className="px-4 py-2 bg-slate-100 hover:bg-slate-200 text-slate-700 rounded-full text-xs font-bold flex items-center space-x-1.5 transition-colors cursor-pointer border border-slate-300"
+              >
+                <RotateCcw className={`w-3.5 h-3.5 ${loadingAuditLogs ? 'animate-spin' : ''}`} />
+                <span>Refresh Logs</span>
+              </button>
+            </div>
+
+            {loadingAuditLogs ? (
+              <div className="py-12 text-center text-slate-400 text-xs font-medium">
+                Loading audit trail from Supabase...
+              </div>
+            ) : auditLogs.length === 0 ? (
+              <div className="py-12 text-center text-slate-400 text-xs">
+                No audit events recorded in the database yet. Live clinical events will record here automatically when staff sign in, finalize reports, download PDFs, or modify clinical records.
+              </div>
+            ) : (
+              <div className="overflow-x-auto">
+                <table className="w-full text-left text-xs border-collapse">
+                  <thead>
+                    <tr className="border-b border-slate-200 bg-slate-50 text-[10px] font-extrabold text-slate-500 uppercase tracking-wider">
+                      <th className="py-3 px-4">Timestamp</th>
+                      <th className="py-3 px-4">Action</th>
+                      <th className="py-3 px-4">User</th>
+                      <th className="py-3 px-4">Target Entity</th>
+                      <th className="py-3 px-4">Details</th>
+                    </tr>
+                  </thead>
+                  <tbody className="divide-y divide-slate-100 font-sans">
+                    {auditLogs.map((log) => {
+                      const isSave = log.action === 'report_saved';
+                      const isRange = log.action === 'reference_range_changed';
+                      const isDoc = log.action === 'doctor_added' || log.action === 'doctor_removed';
+                      const isPrint = log.action === 'report_printed' || log.action === 'report_downloaded';
+                      const isLogout = log.action === 'user_logout';
+
+                      return (
+                        <tr key={log.id} className="hover:bg-slate-50/70 transition-colors">
+                          <td className="py-3 px-4 text-slate-500 font-mono whitespace-nowrap">
+                            {new Date(log.created_at).toLocaleString()}
+                          </td>
+                          <td className="py-3 px-4 whitespace-nowrap">
+                            <span
+                              className={`px-2.5 py-0.5 rounded-full text-[10px] font-black uppercase tracking-wider border ${
+                                isSave
+                                  ? 'bg-emerald-50 text-emerald-800 border-emerald-200'
+                                  : isRange
+                                  ? 'bg-amber-50 text-amber-800 border-amber-200'
+                                  : isDoc
+                                  ? 'bg-purple-50 text-purple-800 border-purple-200'
+                                  : isPrint
+                                  ? 'bg-sky-50 text-sky-800 border-sky-200'
+                                  : isLogout
+                                  ? 'bg-rose-50 text-rose-800 border-rose-200'
+                                  : 'bg-teal-50 text-teal-800 border-teal-200'
+                              }`}
+                            >
+                              {log.action.replace(/_/g, ' ')}
+                            </span>
+                          </td>
+                          <td className="py-3 px-4 font-medium text-slate-800">
+                            {log.user_email || 'Authenticated User'}
+                          </td>
+                          <td className="py-3 px-4 font-mono text-[11px] text-slate-600">
+                            {log.entity_name} ({log.entity_id.slice(0, 8)}...)
+                          </td>
+                          <td className="py-3 px-4 text-slate-500 max-w-xs truncate">
+                            {log.after_data ? JSON.stringify(log.after_data) : '-'}
+                          </td>
+                        </tr>
+                      );
+                    })}
+                  </tbody>
+                </table>
+              </div>
+            )}
           </div>
         )}
       </div>
@@ -2958,27 +3180,14 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({
 
               <div>
                 <label className="block text-xs font-bold text-slate-700  mb-1">
-                  Login Username <span className="text-red-500">*</span>
+                  Email / Username <span className="text-red-500">*</span>
                 </label>
                 <input
                   type="text"
                   required
-                  placeholder="e.g. Kofi"
+                  placeholder="e.g. kofi@carepolyclinic.com"
                   value={newScientistUsername}
                   onChange={(e) => setNewScientistUsername(e.target.value)}
-                  className="w-full px-4 py-2.5 rounded-full border border-slate-300  bg-white  text-slate-900  text-xs font-mono focus:outline-none focus:ring-2 focus:ring-teal-500/30 focus:border-teal-600"
-                />
-              </div>
-
-              <div>
-                <label className="block text-xs font-bold text-slate-700  mb-1">
-                  Login Password <span className="text-red-500">*</span>
-                </label>
-                <input
-                  type="text"
-                  required
-                  value={newScientistPassword}
-                  onChange={(e) => setNewScientistPassword(e.target.value)}
                   className="w-full px-4 py-2.5 rounded-full border border-slate-300  bg-white  text-slate-900  text-xs font-mono focus:outline-none focus:ring-2 focus:ring-teal-500/30 focus:border-teal-600"
                 />
               </div>
@@ -3255,6 +3464,58 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({
                   className="px-5 py-2.5 bg-teal-700 hover:bg-teal-800 text-white rounded-full text-xs font-bold cursor-pointer"
                 >
                   Add Parameter
+                </button>
+              </div>
+            </form>
+          </div>
+        </div>
+      )}
+
+      {/* MODAL: ADD REFERRING DOCTOR */}
+      {showAddDoctorModal && (
+        <div className="fixed inset-0 bg-slate-950/70 backdrop-blur-xs flex items-center justify-center z-50 p-4">
+          <div className="bg-white rounded-[2rem] shadow-xl border border-slate-200 max-w-md w-full p-6 space-y-4">
+            <div className="flex items-center justify-between border-b border-slate-100 pb-3">
+              <h3 className="font-extrabold text-base text-slate-900 flex items-center gap-2">
+                <User className="w-5 h-5 text-teal-600" />
+                <span>Add Referring Doctor</span>
+              </h3>
+              <button
+                onClick={() => setShowAddDoctorModal(false)}
+                className="text-slate-400 hover:text-slate-600 cursor-pointer"
+              >
+                <X className="w-5 h-5" />
+              </button>
+            </div>
+
+            <form onSubmit={handleAddDoctor} className="space-y-4">
+              <div>
+                <label className="block text-xs font-bold text-slate-700 mb-1">
+                  Doctor Name <span className="text-red-500">*</span>
+                </label>
+                <input
+                  type="text"
+                  required
+                  placeholder="e.g. Dr. Kwame Mensah"
+                  value={newDoctorName}
+                  onChange={(e) => setNewDoctorName(e.target.value)}
+                  className="w-full px-4 py-2.5 rounded-full border border-slate-300 bg-white text-slate-900 text-xs font-semibold focus:outline-none focus:ring-2 focus:ring-teal-500/30 focus:border-teal-600"
+                />
+              </div>
+
+              <div className="flex justify-end space-x-2 pt-3 border-t border-slate-100">
+                <button
+                  type="button"
+                  onClick={() => setShowAddDoctorModal(false)}
+                  className="px-4 py-2 text-xs font-semibold text-slate-500 hover:text-slate-800 cursor-pointer"
+                >
+                  Cancel
+                </button>
+                <button
+                  type="submit"
+                  className="px-5 py-2.5 bg-teal-700 hover:bg-teal-800 text-white rounded-full text-xs font-bold cursor-pointer"
+                >
+                  Save Doctor
                 </button>
               </div>
             </form>

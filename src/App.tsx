@@ -9,6 +9,8 @@ import { SettingsModal } from './components/SettingsModal';
 import { LoginPortal } from './components/LoginPortal';
 import { AdminDashboard } from './components/AdminDashboard';
 import { ScientistDashboard } from './components/ScientistDashboard';
+import { NotFoundPage } from './components/NotFoundPage';
+import { ClinicalLoadingScreen } from './components/ClinicalLoadingScreen';
 import { ArrowLeft } from './components/Icons';
 import { useToast } from './context/ToastContext';
 import {
@@ -28,12 +30,15 @@ import {
   loadSavedReports,
   saveReport,
   deleteReport,
-  loadUsers,
-  saveUsers,
   getCurrentUser,
   setCurrentUser as persistCurrentUser,
   clearCurrentUser,
 } from './utils/storage';
+import { getActiveUserSession, signOutSupabase } from './services/authService';
+import { fetchCatalogSupabase, createCustomTestSupabase } from './services/catalogService';
+import { fetchAllReportsSupabase, saveReportSupabase } from './services/reportsService';
+import { fetchDoctorsList } from './services/doctorsService';
+import { supabase, isSupabaseConfigured } from './lib/supabase';
 
 const getInitialPatient = (): PatientDetails => {
   const today = new Date().toISOString().split('T')[0];
@@ -56,8 +61,15 @@ const getInitialPatient = (): PatientDetails => {
 export const App: React.FC = () => {
   const { showSuccess, showInfo, showWarning, askConfirm } = useToast();
 
+  // 404 Route Detection
+  const [isNotFound, setIsNotFound] = useState<boolean>(() => {
+    return window.location.pathname !== '/' && window.location.pathname !== '';
+  });
+
+  // Global Clinical Loading State
+  const [isAppLoading, setIsAppLoading] = useState<boolean>(true);
+
   // Authentication & Current User State (null = show Login Portal)
-  const [users, setUsersState] = useState<UserAccount[]>(loadUsers);
   const [currentUser, setCurrentUserState] = useState<UserAccount | null>(getCurrentUser);
 
   // Navigation & View State
@@ -75,15 +87,100 @@ export const App: React.FC = () => {
   const [selectedTests, setSelectedTests] = useState<SelectedTestState[]>([]);
   const [currentReportId, setCurrentReportId] = useState<string>(() => `rep_${Date.now()}`);
 
-  // Enforce light mode across the entire application
+  // Synchronize reports from Supabase into application state
+  const refreshReports = async () => {
+    try {
+      const supaReports = await fetchAllReportsSupabase();
+      if (supaReports && supaReports.length > 0) {
+        setRecentReports(supaReports);
+      }
+    } catch (err) {
+      console.error('Failed to sync reports from Supabase:', err);
+    }
+  };
+
+  // URL route change listener for 404 page handling
+  useEffect(() => {
+    const handleLocationChange = () => {
+      setIsNotFound(window.location.pathname !== '/' && window.location.pathname !== '');
+    };
+    window.addEventListener('popstate', handleLocationChange);
+    return () => window.removeEventListener('popstate', handleLocationChange);
+  }, []);
+
+  // Enforce light mode across the entire application and initialize Supabase data
   useEffect(() => {
     document.documentElement.classList.remove('dark');
+
+    const initData = async () => {
+      try {
+        await Promise.allSettled([
+          getActiveUserSession().then((sessionUser) => {
+            if (sessionUser) {
+              setCurrentUserState(sessionUser);
+            }
+          }),
+          fetchCatalogSupabase().then((supaCatalog) => {
+            if (supaCatalog && supaCatalog.length > 0) {
+              setCatalogState(supaCatalog);
+            }
+          }),
+          refreshReports(),
+          fetchDoctorsList().then((doctors) => {
+            if (doctors && doctors.length > 0) {
+              setFacilitySettingsState((prev) => ({ ...prev, doctors }));
+            }
+          }),
+        ]);
+      } catch (e) {
+        console.error('Initialization error:', e);
+      } finally {
+        setIsAppLoading(false);
+      }
+    };
+
+    initData();
+
+    // Realtime Supabase updates: Listen for any new or finalized reports
+    let channel: any = null;
+    if (isSupabaseConfigured()) {
+      channel = supabase
+        .channel('realtime_reports_sync')
+        .on(
+          'postgres_changes',
+          { event: '*', schema: 'public', table: 'reports' },
+          () => {
+            refreshReports();
+          }
+        )
+        .on(
+          'postgres_changes',
+          { event: '*', schema: 'public', table: 'lab_requests' },
+          () => {
+            refreshReports();
+          }
+        )
+        .subscribe();
+    }
+
+    // Background auto-refresh polling interval (every 4 seconds) to guarantee immediate reflection
+    const pollInterval = setInterval(() => {
+      refreshReports();
+    }, 4000);
+
+    return () => {
+      if (channel) {
+        supabase.removeChannel(channel);
+      }
+      clearInterval(pollInterval);
+    };
   }, []);
 
   const handleLogin = (user: UserAccount) => {
     persistCurrentUser(user);
     setCurrentUserState(user);
     setAdminViewingReport(null);
+    refreshReports();
 
     // Guarantee isolated fresh intake workspace for the logged in user
     setPatient(getInitialPatient());
@@ -112,8 +209,8 @@ export const App: React.FC = () => {
   ) => {
     if (!currentPatient.name || !currentPatient.name.trim()) return;
 
-    const scientistUsername = currentUser?.username || 'Dorean';
-    const scientistName = currentUser?.displayName || 'Dorean';
+    const scientistUsername = currentUser?.username || 'Unknown';
+    const scientistName = currentUser?.displayName || 'Unknown';
     const scientistTitle = currentUser?.title || 'Medical Laboratory Scientist';
 
     const existing = recentReports.find((r) => r.id === currentReportId);
@@ -136,6 +233,7 @@ export const App: React.FC = () => {
 
     const updated = saveReport(reportToSave);
     setRecentReports(updated);
+    saveReportSupabase(reportToSave, currentUser).catch((e) => console.error(e));
     if (notify) {
       showSuccess(`Patient intake recorded as Pending Workup on your dashboard.`);
     }
@@ -192,20 +290,9 @@ export const App: React.FC = () => {
     setAdminViewingReport(null);
 
     clearCurrentUser();
+    await signOutSupabase(currentUser);
     setCurrentUserState(null);
     showSuccess(`Successfully signed out. Workspace reset for the next user.`);
-  };
-
-  const handleSaveUsers = (newUsers: UserAccount[]) => {
-    saveUsers(newUsers);
-    setUsersState(newUsers);
-    if (currentUser) {
-      const updatedCurrent = newUsers.find((u) => u.username === currentUser.username);
-      if (updatedCurrent) {
-        persistCurrentUser(updatedCurrent);
-        setCurrentUserState(updatedCurrent);
-      }
-    }
   };
 
   // Handlers for Facility Settings
@@ -225,10 +312,11 @@ export const App: React.FC = () => {
     setCatalogState(defaultCatalog);
   };
 
-  const handleAddCustomTest = (newTest: LabTest) => {
+  const handleAddCustomTest = async (newTest: LabTest) => {
     const updated = [...catalog, newTest];
     saveTestCatalog(updated);
     setCatalogState(updated);
+    await createCustomTestSupabase(newTest);
   };
 
   const areAllResultsFilled = (tests: SelectedTestState[], cat: LabTest[]): boolean => {
@@ -295,9 +383,9 @@ export const App: React.FC = () => {
   };
 
   // Save current report with recorded scientist credentials and marked 'completed'
-  const handleSaveCurrentReport = () => {
-    const scientistUsername = currentUser?.username || 'Dorean';
-    const scientistName = currentUser?.displayName || 'Dorean';
+  const handleSaveCurrentReport = async () => {
+    const scientistUsername = currentUser?.username || 'Unknown';
+    const scientistName = currentUser?.displayName || 'Unknown';
     const scientistTitle = currentUser?.title || 'Medical Laboratory Scientist';
 
     const existing = recentReports.find((r) => r.id === currentReportId);
@@ -317,7 +405,7 @@ export const App: React.FC = () => {
       })),
       facilitySettings,
     };
-    const updated = saveReport(report);
+    const updated = await saveReportSupabase(report, currentUser);
     setRecentReports(updated);
     showSuccess(`Report finalized & saved as Completed under scientist ${scientistName}!`);
   };
@@ -379,11 +467,36 @@ export const App: React.FC = () => {
     setRecentReports(updated);
   };
 
-  // 1. GATE: If user is not logged in, show Full-Screen Login Portal!
+  // 0. 404 Route Gate
+  if (isNotFound) {
+    return (
+      <NotFoundPage
+        onReturnHome={() => {
+          window.history.pushState({}, '', '/');
+          setIsNotFound(false);
+        }}
+      />
+    );
+  }
+
+  // 1. Clinical Data Loading Screen
+  if (isAppLoading) {
+    return (
+      <ClinicalLoadingScreen
+        message="Connecting to Care & Social Polyclinic LIS..."
+        onRetry={() => {
+          setIsAppLoading(true);
+          refreshReports().finally(() => setIsAppLoading(false));
+        }}
+        onBypass={() => setIsAppLoading(false)}
+      />
+    );
+  }
+
+  // 2. GATE: If user is not logged in, show Full-Screen Login Portal!
   if (!currentUser) {
     return (
       <LoginPortal
-        users={users}
         facilitySettings={facilitySettings}
         onLogin={handleLogin}
       />
@@ -427,8 +540,6 @@ export const App: React.FC = () => {
         catalog={catalog}
         onSaveCatalog={handleSaveCatalog}
         onResetCatalog={handleResetCatalog}
-        users={users}
-        onSaveUsers={handleSaveUsers}
         facilitySettings={facilitySettings}
         onSaveFacilitySettings={handleSaveFacilitySettings}
         onLogout={handleLogout}
@@ -437,7 +548,7 @@ export const App: React.FC = () => {
     );
   }
 
-  // 3. SCIENTIST WORKBENCH: For Dorean and Hawa to perform and enter patient tests
+  // 3. SCIENTIST WORKBENCH: For scientists to perform and enter patient tests
   return (
     <div className="min-h-screen flex flex-col bg-slate-50 text-slate-800 font-sans transition-colors">
       {/* Header */}
@@ -571,8 +682,6 @@ export const App: React.FC = () => {
               catalog={catalog}
               onSaveCatalog={handleSaveCatalog}
               onResetCatalog={handleResetCatalog}
-              users={users}
-              onSaveUsers={handleSaveUsers}
               onClose={() => setActiveTab('report')}
             />
           </div>

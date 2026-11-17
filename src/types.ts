@@ -97,7 +97,6 @@ export type UserRole = 'admin' | 'scientist';
 
 export interface UserAccount {
   username: string;
-  password?: string;
   displayName: string;
   role: UserRole;
   title: string; // e.g. "Medical Laboratory Scientist, MLS (AHPC)"

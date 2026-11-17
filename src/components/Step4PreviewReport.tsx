@@ -19,6 +19,11 @@ import {
 } from '../types';
 import { evaluateFlag, getDisplayReferenceRange } from '../utils/flagging';
 import { useToast } from '../context/ToastContext';
+import {
+  logReportPrintAction,
+  logReportDownloadAction,
+  uploadReportPdfToStorage,
+} from '../services/reportsService';
 
 interface Step4PreviewReportProps {
   catalog: LabTest[];
@@ -225,8 +230,8 @@ export const Step4PreviewReport: React.FC<Step4PreviewReportProps> = ({
     }
 
     const pages: SheetPage[] = [];
-    const PAGE1_ROW_LIMIT = 28; // Page 1 comfortably holds up to 26-28 rows with headers & patient block
-    const SUBSEQUENT_PAGE_ROW_LIMIT = 36; // Page 2+ holds up to 36 rows with compact header
+    const PAGE1_ROW_LIMIT = 18; // Page 1 has full header and patient block
+    const SUBSEQUENT_PAGE_ROW_LIMIT = 24; // Page 2+ has compact header
 
     let currentPageTests: SheetPage['tests'] = [];
     let currentRowCount = 0;
@@ -238,11 +243,11 @@ export const Step4PreviewReport: React.FC<Step4PreviewReportProps> = ({
 
       while (remainingRows.length > 0) {
         const currentLimit = isFirst ? PAGE1_ROW_LIMIT : SUBSEQUENT_PAGE_ROW_LIMIT;
+        // Test heading weight is equivalent to ~2 rows
         const availableCapacity = currentLimit - currentRowCount;
-        const titleWeight = isFirstChunkOfTest ? 1.5 : 1;
 
         // If not enough room for test title + at least 1 row, break to new sheet
-        if (availableCapacity < (titleWeight + 1) && currentRowCount > 0) {
+        if (availableCapacity < 3 && currentRowCount > 0) {
           pages.push({
             pageNumber: pages.length + 1,
             totalPages: 1,
@@ -256,7 +261,7 @@ export const Step4PreviewReport: React.FC<Step4PreviewReportProps> = ({
           continue;
         }
 
-        const effectiveCapacity = Math.floor(currentLimit - currentRowCount - titleWeight);
+        const effectiveCapacity = currentLimit - currentRowCount - 2; // reserve 2 units for title
         const rowsToTake = Math.max(1, Math.min(remainingRows.length, effectiveCapacity));
 
         const chunkRows = remainingRows.slice(0, rowsToTake);
@@ -270,7 +275,7 @@ export const Step4PreviewReport: React.FC<Step4PreviewReportProps> = ({
           rows: chunkRows,
         });
 
-        currentRowCount += chunkRows.length + titleWeight;
+        currentRowCount += chunkRows.length + 2;
         isFirstChunkOfTest = false;
 
         if (currentRowCount >= currentLimit && remainingRows.length > 0) {
@@ -321,6 +326,7 @@ export const Step4PreviewReport: React.FC<Step4PreviewReportProps> = ({
       showWarning('Cannot print report: Please click "Save Report" first before printing.');
       return;
     }
+    logReportPrintAction(reportData.patient.sampleId, reportData.patient.name).catch(() => {});
     window.print();
   };
 
@@ -330,6 +336,7 @@ export const Step4PreviewReport: React.FC<Step4PreviewReportProps> = ({
       return;
     }
 
+    logReportDownloadAction(reportData.patient.sampleId, reportData.patient.name).catch(() => {});
     setIsDownloading(true);
     const element = printAreaRef.current;
     if (!element) {
@@ -378,10 +385,10 @@ export const Step4PreviewReport: React.FC<Step4PreviewReportProps> = ({
     }
     .a4-print-sheet {
       width: 210mm;
-      height: 296mm;
-      min-height: 296mm;
-      max-height: 296mm;
-      padding: 12mm 16mm 10mm 16mm;
+      height: 297mm;
+      min-height: 297mm;
+      max-height: 297mm;
+      padding: 14mm 16mm;
       box-sizing: border-box;
       overflow: hidden;
       background: #ffffff;
@@ -390,8 +397,6 @@ export const Step4PreviewReport: React.FC<Step4PreviewReportProps> = ({
       display: flex;
       flex-direction: column;
       justify-content: space-between;
-      page-break-inside: avoid !important;
-      break-inside: avoid !important;
     }
     .tabular-nums { font-variant-numeric: tabular-nums; }
   </style>
@@ -505,11 +510,10 @@ export const Step4PreviewReport: React.FC<Step4PreviewReportProps> = ({
 
           <button
             onClick={handleSave}
-            className={`px-4 py-2 rounded-full text-white text-xs font-bold flex items-center space-x-1.5 transition-all shadow-xs cursor-pointer ${
-              isSaved
-                ? 'bg-emerald-700 hover:bg-emerald-800'
-                : 'bg-emerald-600 hover:bg-emerald-700 ring-2 ring-emerald-300 animate-pulse'
-            }`}
+            className={`px-4 py-2 rounded-full text-white text-xs font-bold flex items-center space-x-1.5 transition-all shadow-xs cursor-pointer ${isSaved
+              ? 'bg-emerald-700 hover:bg-emerald-800'
+              : 'bg-emerald-600 hover:bg-emerald-700 ring-2 ring-emerald-300 animate-pulse'
+              }`}
           >
             <Save className="w-3.5 h-3.5" />
             <span>{isSaved ? 'Update Saved Report' : 'Save Report'}</span>
@@ -518,11 +522,10 @@ export const Step4PreviewReport: React.FC<Step4PreviewReportProps> = ({
           <button
             onClick={handleDownloadPDF}
             disabled={!isSaved || isDownloading}
-            className={`px-4 py-2 rounded-full text-xs font-bold flex items-center space-x-1.5 transition-all shadow-xs ${
-              isSaved && !isDownloading
-                ? 'bg-teal-700 hover:bg-teal-800 text-white cursor-pointer active:scale-95'
-                : 'bg-slate-200 text-slate-400 border border-slate-300 cursor-not-allowed opacity-60'
-            }`}
+            className={`px-4 py-2 rounded-full text-xs font-bold flex items-center space-x-1.5 transition-all shadow-xs ${isSaved && !isDownloading
+              ? 'bg-teal-700 hover:bg-teal-800 text-white cursor-pointer active:scale-95'
+              : 'bg-slate-200 text-slate-400 border border-slate-300 cursor-not-allowed opacity-60'
+              }`}
             title={isSaved ? 'Automatically download report file' : 'Save report first to enable download'}
           >
             <Download className="w-3.5 h-3.5" />
@@ -532,11 +535,10 @@ export const Step4PreviewReport: React.FC<Step4PreviewReportProps> = ({
           <button
             onClick={handlePrint}
             disabled={!isSaved}
-            className={`px-4 py-2 rounded-full text-xs font-bold flex items-center space-x-1.5 transition-all shadow-xs ${
-              isSaved
-                ? 'bg-slate-900 hover:bg-black text-white cursor-pointer active:scale-95'
-                : 'bg-slate-200 text-slate-400 border border-slate-300 cursor-not-allowed opacity-60'
-            }`}
+            className={`px-4 py-2 rounded-full text-xs font-bold flex items-center space-x-1.5 transition-all shadow-xs ${isSaved
+              ? 'bg-slate-900 hover:bg-black text-white cursor-pointer active:scale-95'
+              : 'bg-slate-200 text-slate-400 border border-slate-300 cursor-not-allowed opacity-60'
+              }`}
             title={isSaved ? 'Print report' : 'Save report first to enable printing'}
           >
             <Printer className="w-3.5 h-3.5 text-teal-300" />
@@ -555,17 +557,17 @@ export const Step4PreviewReport: React.FC<Step4PreviewReportProps> = ({
 
       {/* ── PRINTABLE A4 SHEETS CONTAINER (Screen grey background with soft shadow) ── */}
       <div className="bg-slate-200/80 p-2 sm:p-8 rounded-2xl flex flex-col items-center gap-6 overflow-x-auto no-print-bg">
-        <div id="printable-report" ref={printAreaRef} className="w-full flex flex-col items-center gap-8">
+        <div ref={printAreaRef} className="w-full flex flex-col items-center gap-8">
           {sheets.map((sheet) => (
             <div
               key={`sheet-${sheet.pageNumber}`}
               className="a4-print-sheet bg-white text-slate-900 shadow-xl border border-slate-300/80 mx-auto"
               style={{
                 width: '210mm',
-                height: '296mm',
-                minHeight: '296mm',
-                maxHeight: '296mm',
-                padding: '12mm 16mm 10mm 16mm',
+                height: '297mm',
+                minHeight: '297mm',
+                maxHeight: '297mm',
+                padding: '14mm 16mm',
                 boxSizing: 'border-box',
                 overflow: 'hidden',
                 fontFamily: 'Figtree, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif',
@@ -573,8 +575,6 @@ export const Step4PreviewReport: React.FC<Step4PreviewReportProps> = ({
                 flexDirection: 'column',
                 justifyContent: 'space-between',
                 color: '#0f172a',
-                pageBreakInside: 'avoid',
-                breakInside: 'avoid',
               }}
             >
               {/* TOP SECTION: Header, Title, Patient Block, Test Tables */}
@@ -847,19 +847,19 @@ export const Step4PreviewReport: React.FC<Step4PreviewReportProps> = ({
                                 fontWeight: 600,
                               }}
                             >
-                              <th style={{ padding: '3px 6px', textAlign: 'left', width: '38%' }}>
+                              <th style={{ padding: '4px 6px', textAlign: 'left', width: '38%' }}>
                                 Parameter
                               </th>
-                              <th style={{ padding: '3px 6px', textAlign: 'right', width: '18%' }}>
+                              <th style={{ padding: '4px 6px', textAlign: 'right', width: '18%' }}>
                                 Result
                               </th>
-                              <th style={{ padding: '3px 6px', textAlign: 'left', width: '16%' }}>
+                              <th style={{ padding: '4px 6px', textAlign: 'left', width: '16%' }}>
                                 Unit
                               </th>
-                              <th style={{ padding: '3px 6px', textAlign: 'left', width: '22%' }}>
+                              <th style={{ padding: '4px 6px', textAlign: 'left', width: '22%' }}>
                                 Reference range
                               </th>
-                              <th style={{ padding: '3px 4px', textAlign: 'center', width: '6%' }}>
+                              <th style={{ padding: '4px 4px', textAlign: 'center', width: '6%' }}>
                                 Flag
                               </th>
                             </tr>
@@ -884,8 +884,8 @@ export const Step4PreviewReport: React.FC<Step4PreviewReportProps> = ({
                                   {/* Parameter */}
                                   <td
                                     style={{
-                                      padding: '3px 6px',
-                                      fontSize: '9pt',
+                                      padding: '4px 6px',
+                                      fontSize: '9.5pt',
                                     }}
                                   >
                                     {row.parameter}
@@ -895,9 +895,9 @@ export const Step4PreviewReport: React.FC<Step4PreviewReportProps> = ({
                                   <td
                                     className="tabular-nums"
                                     style={{
-                                      padding: '3px 6px',
+                                      padding: '4px 6px',
                                       textAlign: 'right',
-                                      fontSize: '9.5pt',
+                                      fontSize: '10pt',
                                       fontVariantNumeric: 'tabular-nums',
                                     }}
                                   >
@@ -907,7 +907,7 @@ export const Step4PreviewReport: React.FC<Step4PreviewReportProps> = ({
                                   {/* Unit */}
                                   <td
                                     style={{
-                                      padding: '3px 6px',
+                                      padding: '4px 6px',
                                       fontSize: '8.5pt',
                                       color: isAbnormal ? '#dc2626' : '#64748b',
                                       fontWeight: 500,
@@ -919,7 +919,7 @@ export const Step4PreviewReport: React.FC<Step4PreviewReportProps> = ({
                                   {/* Reference Range (same weight in every table) */}
                                   <td
                                     style={{
-                                      padding: '3px 6px',
+                                      padding: '4px 6px',
                                       fontSize: '8.5pt',
                                       color: '#64748b',
                                       fontWeight: 500,
@@ -993,18 +993,18 @@ export const Step4PreviewReport: React.FC<Step4PreviewReportProps> = ({
               </div>
 
               {/* BOTTOM SECTION: End of Report, Footer (Printed, Legend, Signature) */}
-              <div style={{ marginTop: 'auto', paddingTop: '1.5mm' }}>
+              <div>
                 {/* 6. "End of report" centred, small and grey (Last page only) */}
                 {sheet.isLastPage && (
                   <div
                     className="text-center"
                     style={{
-                      fontSize: '8pt',
+                      fontSize: '8.5pt',
                       color: '#94a3b8',
                       letterSpacing: '0.08em',
                       textTransform: 'uppercase',
-                      marginTop: '2mm',
-                      marginBottom: '2mm',
+                      marginTop: '4mm',
+                      marginBottom: '3mm',
                     }}
                   >
                     *** End of report ***
@@ -1015,19 +1015,19 @@ export const Step4PreviewReport: React.FC<Step4PreviewReportProps> = ({
                 <div
                   style={{
                     borderTop: '1px solid #e2e8f0',
-                    paddingTop: '2mm',
+                    paddingTop: '3mm',
                     display: 'flex',
                     alignItems: 'flex-end',
                     justifyContent: 'space-between',
                   }}
                 >
                   {/* Left: Printed timestamp, Legend, Page Number */}
-                  <div style={{ fontSize: '8pt', color: '#64748b', lineHeight: 1.35 }}>
+                  <div style={{ fontSize: '8.5pt', color: '#64748b', lineHeight: 1.4 }}>
                     <div>Printed {reportData.printedAt}</div>
-                    <div style={{ fontSize: '7.5pt', color: '#94a3b8' }}>
+                    <div style={{ fontSize: '8pt', color: '#94a3b8' }}>
                       H = above reference range, L = below reference range
                     </div>
-                    <div style={{ fontSize: '8pt', fontWeight: 600, color: '#475569', marginTop: '0.5mm' }}>
+                    <div style={{ fontSize: '8.5pt', fontWeight: 600, color: '#475569', marginTop: '1mm' }}>
                       Page {sheet.pageNumber} of {sheet.totalPages}
                     </div>
                   </div>
@@ -1035,20 +1035,20 @@ export const Step4PreviewReport: React.FC<Step4PreviewReportProps> = ({
                   {/* Right: Signature Block (Last page only) */}
                   <div className="text-right">
                     {sheet.isLastPage ? (
-                      <div style={{ display: 'inline-block', textAlign: 'center', width: '180px' }}>
+                      <div style={{ display: 'inline-block', textAlign: 'center', width: '190px' }}>
                         {/* Space for handwritten signature */}
-                        <div style={{ height: '18px' }} />
+                        <div style={{ height: '22px' }} />
                         {/* Dark line */}
-                        <div style={{ borderBottom: '1px solid #334155', width: '100%', marginBottom: '3px' }} />
+                        <div style={{ borderBottom: '1px solid #334155', width: '100%', marginBottom: '4px' }} />
                         <div
                           className="font-bold uppercase"
-                          style={{ fontSize: '9.5pt', color: '#0f172a', lineHeight: 1.2 }}
+                          style={{ fontSize: '10pt', color: '#0f172a', lineHeight: 1.2 }}
                         >
                           {reportData.scientist.name}
                         </div>
                         <div
                           style={{
-                            fontSize: '8pt',
+                            fontSize: '8.5pt',
                             color: '#64748b',
                             lineHeight: 1.2,
                           }}
@@ -1059,7 +1059,7 @@ export const Step4PreviewReport: React.FC<Step4PreviewReportProps> = ({
                     ) : (
                       <div
                         className="italic font-medium"
-                        style={{ fontSize: '8pt', color: '#64748b' }}
+                        style={{ fontSize: '8.5pt', color: '#64748b' }}
                       >
                         [Continued on Page {sheet.pageNumber + 1}...]
                       </div>

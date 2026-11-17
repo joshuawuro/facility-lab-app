@@ -173,21 +173,21 @@ export const ScientistDashboard: React.FC<ScientistDashboardProps> = ({
       {/* ========================================================================= */}
       <div className="bg-white rounded-3xl shadow-sm border border-amber-200/90 overflow-hidden">
         {/* Section Header */}
-        <div className="px-6 py-4.5 bg-gradient-to-r from-amber-500/10 via-amber-500/5 to-transparent border-b border-amber-200/80 flex items-center justify-between flex-wrap gap-2">
-          <div className="flex items-center gap-3">
-            <div className="w-9 h-9 rounded-xl bg-amber-500 text-white flex items-center justify-center shadow-xs">
+        <div className="px-6 sm:px-8 py-5 sm:py-6 bg-gradient-to-r from-amber-500/10 via-amber-500/5 to-transparent border-b border-amber-200/80 flex items-center justify-between flex-wrap gap-4">
+          <div className="flex items-center gap-3.5 sm:gap-4">
+            <div className="w-10 h-10 rounded-2xl bg-amber-500 text-white flex items-center justify-center shadow-xs shrink-0">
               <Clock className="w-5 h-5 animate-spin-slow" />
             </div>
             <div>
-              <div className="flex items-center gap-2">
-                <h3 className="text-base font-black text-slate-900">
+              <div className="flex items-center gap-2.5 flex-wrap">
+                <h3 className="text-base sm:text-lg font-black text-slate-900">
                   Pending Lab Workups
                 </h3>
-                <span className="px-2.5 py-0.5 rounded-full text-[11px] font-black bg-amber-100 text-amber-900 border border-amber-300">
+                <span className="px-3 py-1 rounded-full text-xs font-black bg-amber-100 text-amber-900 border border-amber-300 shadow-2xs">
                   {pendingReports.length} In Progress
                 </span>
               </div>
-              <p className="text-xs text-slate-500 mt-0.5">
+              <p className="text-xs sm:text-sm text-slate-500 mt-1 max-w-2xl font-medium leading-relaxed">
                 Patients admitted with pending tests. Click &ldquo;Resume Workup&rdquo; whenever analyzer or culture results are ready.
               </p>
             </div>
@@ -195,9 +195,9 @@ export const ScientistDashboard: React.FC<ScientistDashboardProps> = ({
 
           <button
             onClick={onNewPatient}
-            className="text-xs font-extrabold text-amber-900 hover:text-amber-950 bg-amber-100/80 hover:bg-amber-200/80 border border-amber-300 px-3.5 py-1.5 rounded-full transition-colors inline-flex items-center gap-1.5 cursor-pointer"
+            className="text-xs sm:text-sm font-extrabold text-amber-900 hover:text-amber-950 bg-amber-100/90 hover:bg-amber-200 border border-amber-300 px-4 py-2 sm:px-5 sm:py-2.5 rounded-full transition-all inline-flex items-center gap-2 shadow-xs hover:shadow-sm cursor-pointer shrink-0"
           >
-            <Plus className="w-3.5 h-3.5" />
+            <Plus className="w-4 h-4" />
             <span>Admit Another Patient</span>
           </button>
         </div>
@@ -232,7 +232,7 @@ export const ScientistDashboard: React.FC<ScientistDashboardProps> = ({
               return (
                 <div
                   key={report.id}
-                  className="p-5 hover:bg-amber-50/40 transition-colors flex flex-col md:flex-row md:items-center justify-between gap-4"
+                  className="p-5 sm:p-6 sm:px-8 hover:bg-amber-50/40 transition-colors flex flex-col md:flex-row md:items-center justify-between gap-4"
                 >
                   {/* Left: Patient Demographics & Sample Details */}
                   <div className="flex items-start gap-3.5 min-w-0">
@@ -329,18 +329,18 @@ export const ScientistDashboard: React.FC<ScientistDashboardProps> = ({
       {/* RECENT COMPLETED REPORTS ACTIVITY                                         */}
       {/* ========================================================================= */}
       <div className="bg-white rounded-3xl shadow-sm border border-slate-200/90 overflow-hidden">
-        <div className="px-6 py-4.5 border-b border-slate-100 flex items-center justify-between">
+        <div className="px-6 sm:px-8 py-5 sm:py-6 border-b border-slate-100 flex items-center justify-between flex-wrap gap-4">
           <div>
-            <h3 className="text-sm font-extrabold text-slate-900">Recent Completed Reports</h3>
-            <p className="text-xs text-slate-400 mt-0.5">Last 5 finalized patient records</p>
+            <h3 className="text-base sm:text-lg font-black text-slate-900">Recent Completed Reports</h3>
+            <p className="text-xs sm:text-sm text-slate-500 mt-1 font-medium">Last 5 finalized patient records</p>
           </div>
-          <span className="text-xs font-bold text-emerald-700 bg-emerald-50 px-3 py-1 rounded-full border border-emerald-200">
+          <span className="text-xs sm:text-sm font-bold text-emerald-800 bg-emerald-50 px-4 py-1.5 rounded-full border border-emerald-200/80 shadow-2xs">
             {completedReports.length} completed
           </span>
         </div>
 
         {recentCompletedFive.length === 0 ? (
-          <div className="py-14 text-center">
+          <div className="py-14 sm:py-16 text-center">
             <FileText className="w-10 h-10 text-slate-300 mx-auto mb-3" />
             <p className="text-sm text-slate-500 font-bold">No completed reports yet</p>
             <p className="text-xs text-slate-400 mt-1">Finalized patient reports will appear here</p>
@@ -350,12 +350,12 @@ export const ScientistDashboard: React.FC<ScientistDashboardProps> = ({
             <table className="w-full text-sm">
               <thead>
                 <tr className="border-b border-slate-100 text-left text-[11px] font-semibold text-slate-400 uppercase tracking-wider">
-                  <th className="px-6 py-3.5">Patient Name</th>
-                  <th className="px-4 py-3.5 hidden sm:table-cell">Diagnostic Test(s)</th>
-                  <th className="px-4 py-3.5 hidden md:table-cell">Date</th>
-                  <th className="px-4 py-3.5 hidden lg:table-cell">Scientist</th>
-                  <th className="px-4 py-3.5">Status</th>
-                  <th className="px-6 py-3.5 text-right">Action</th>
+                  <th className="px-6 sm:px-8 py-4">Patient Name</th>
+                  <th className="px-4 py-4 hidden sm:table-cell">Diagnostic Test(s)</th>
+                  <th className="px-4 py-4 hidden md:table-cell">Date</th>
+                  <th className="px-4 py-4 hidden lg:table-cell">Scientist</th>
+                  <th className="px-4 py-4">Status</th>
+                  <th className="px-6 sm:px-8 py-4 text-right">Action</th>
                 </tr>
               </thead>
               <tbody className="divide-y divide-slate-100">
@@ -376,7 +376,7 @@ export const ScientistDashboard: React.FC<ScientistDashboardProps> = ({
                       key={report.id}
                       className="hover:bg-slate-50/70 transition-colors"
                     >
-                      <td className="px-6 py-3.5">
+                      <td className="px-6 sm:px-8 py-4">
                         <div className="flex items-center gap-2.5">
                           <div className="w-8 h-8 rounded-full bg-teal-100 text-teal-700 flex items-center justify-center font-black text-xs shrink-0">
                             {report.patient.name ? report.patient.name.charAt(0).toUpperCase() : 'P'}
@@ -392,7 +392,7 @@ export const ScientistDashboard: React.FC<ScientistDashboardProps> = ({
                           </div>
                         </div>
                       </td>
-                      <td className="px-4 py-3.5 hidden sm:table-cell">
+                      <td className="px-4 py-4 hidden sm:table-cell">
                         <span className="text-slate-600 text-xs font-medium">
                           {testNames}
                           {extra && (
@@ -400,12 +400,12 @@ export const ScientistDashboard: React.FC<ScientistDashboardProps> = ({
                           )}
                         </span>
                       </td>
-                      <td className="px-4 py-3.5 hidden md:table-cell">
+                      <td className="px-4 py-4 hidden md:table-cell">
                         <span className="text-xs text-slate-500 font-mono">
                           {formatDate(report.createdAt)}
                         </span>
                       </td>
-                      <td className="px-4 py-3.5 hidden lg:table-cell">
+                      <td className="px-4 py-4 hidden lg:table-cell">
                         <span
                           className={`text-[10px] font-bold px-2 py-0.5 rounded-full border ${
                             isDorean
@@ -418,13 +418,13 @@ export const ScientistDashboard: React.FC<ScientistDashboardProps> = ({
                           {report.performedByName || report.performedBy}
                         </span>
                       </td>
-                      <td className="px-4 py-3.5">
+                      <td className="px-4 py-4">
                         <span className="inline-flex items-center gap-1 px-2.5 py-0.5 rounded-full text-[11px] font-bold bg-emerald-100 text-emerald-800 border border-emerald-200">
                           <CheckCircle2 className="w-3 h-3 text-emerald-600" />
                           <span>Completed</span>
                         </span>
                       </td>
-                      <td className="px-6 py-3.5 text-right">
+                      <td className="px-6 sm:px-8 py-4 text-right">
                         <button
                           onClick={() => onViewReport(report)}
                           className="px-3 py-1 bg-slate-100 hover:bg-teal-50 text-slate-600 hover:text-teal-700 rounded-lg text-xs font-bold transition-colors inline-flex items-center gap-1 cursor-pointer border border-slate-200 hover:border-teal-200"

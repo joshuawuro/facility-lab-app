@@ -1,60 +1,10 @@
 import { FacilitySettings, LabTest, SavedReport, UserAccount } from '../types';
 import { DEFAULT_FACILITY_SETTINGS, DEFAULT_TEST_CATALOG } from '../data/defaultCatalog';
-import { DUMMY_ARCHIVED_REPORTS } from '../data/sampleData';
 
 const SETTINGS_KEY = 'facility_lab_settings_v1';
 const CATALOG_KEY = 'facility_lab_catalog_v1';
 const REPORTS_KEY = 'facility_lab_reports_v4';
-const USERS_KEY = 'facility_lab_users_v1';
 const CURRENT_USER_KEY = 'facility_lab_current_user_v1';
-const THEME_KEY = 'facility_lab_theme_v1';
-
-export const DEFAULT_USERS: UserAccount[] = [
-  {
-    username: 'Dorean',
-    password: 'password',
-    displayName: 'Dorean',
-    role: 'scientist',
-    title: 'Medical Laboratory Scientist',
-  },
-  {
-    username: 'Hawa',
-    password: 'password',
-    displayName: 'Hawa',
-    role: 'scientist',
-    title: 'Medical Laboratory Scientist',
-  },
-  {
-    username: 'admin',
-    password: 'password',
-    displayName: 'Admin',
-    role: 'admin',
-    title: 'Laboratory Administrator',
-  },
-];
-
-export function loadUsers(): UserAccount[] {
-  try {
-    const raw = localStorage.getItem(USERS_KEY);
-    if (!raw) {
-      localStorage.setItem(USERS_KEY, JSON.stringify(DEFAULT_USERS));
-      return DEFAULT_USERS;
-    }
-    const parsed = JSON.parse(raw);
-    return Array.isArray(parsed) && parsed.length > 0 ? parsed : DEFAULT_USERS;
-  } catch (e) {
-    console.error('Failed to load users', e);
-    return DEFAULT_USERS;
-  }
-}
-
-export function saveUsers(users: UserAccount[]): void {
-  try {
-    localStorage.setItem(USERS_KEY, JSON.stringify(users));
-  } catch (e) {
-    console.error('Failed to save users', e);
-  }
-}
 
 export function getCurrentUser(): UserAccount | null {
   try {
@@ -159,8 +109,7 @@ export function loadSavedReports(): SavedReport[] {
   try {
     const raw = localStorage.getItem(REPORTS_KEY);
     if (!raw) {
-      localStorage.setItem(REPORTS_KEY, JSON.stringify(DUMMY_ARCHIVED_REPORTS));
-      return DUMMY_ARCHIVED_REPORTS;
+      return [];
     }
     const parsed = JSON.parse(raw);
     if (Array.isArray(parsed) && parsed.length > 0) {
@@ -169,10 +118,10 @@ export function loadSavedReports(): SavedReport[] {
         status: r.status || 'completed',
       }));
     }
-    return DUMMY_ARCHIVED_REPORTS;
+    return [];
   } catch (e) {
     console.error('Failed to load saved reports', e);
-    return DUMMY_ARCHIVED_REPORTS;
+    return [];
   }
 }
 
@@ -214,7 +163,6 @@ export function exportBackupJSON(): string {
     settings: loadFacilitySettings(),
     catalog: loadTestCatalog(),
     reports: loadSavedReports(),
-    users: loadUsers(),
     exportedAt: new Date().toISOString(),
     version: '2.0',
   };
@@ -227,7 +175,6 @@ export function importBackupJSON(jsonStr: string): boolean {
     if (data.settings) saveFacilitySettings(data.settings);
     if (data.catalog) saveTestCatalog(data.catalog);
     if (data.reports) localStorage.setItem(REPORTS_KEY, JSON.stringify(data.reports));
-    if (data.users) saveUsers(data.users);
     return true;
   } catch (e) {
     console.error('Failed to import backup JSON', e);

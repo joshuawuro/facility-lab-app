@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import {
   Settings,
   Building,
@@ -18,6 +18,7 @@ import {
 import { FacilitySettings, LabTest, TestParameter, UserAccount } from '../types';
 import { exportBackupJSON, importBackupJSON } from '../utils/storage';
 import { useToast } from '../context/ToastContext';
+import { fetchStaffProfiles, updateStaffProfile } from '../services/authService';
 
 interface SettingsModalProps {
   facilitySettings: FacilitySettings;
@@ -25,8 +26,6 @@ interface SettingsModalProps {
   catalog: LabTest[];
   onSaveCatalog: (catalog: LabTest[]) => void;
   onResetCatalog: () => void;
-  users: UserAccount[];
-  onSaveUsers: (users: UserAccount[]) => void;
   onClose: () => void;
 }
 
@@ -36,8 +35,6 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
   catalog,
   onSaveCatalog,
   onResetCatalog,
-  users,
-  onSaveUsers,
   onClose,
 }) => {
   const { showSuccess, showError, showWarning, askConfirm } = useToast();
@@ -53,8 +50,16 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
   const [rangesSavedAlert, setRangesSavedAlert] = useState(false);
 
   // Users State
-  const [localUsers, setLocalUsers] = useState<UserAccount[]>([...users]);
+  const [localUsers, setLocalUsers] = useState<UserAccount[]>([]);
   const [userSavedAlert, setUserSavedAlert] = useState(false);
+
+  useEffect(() => {
+    fetchStaffProfiles().then((staff) => {
+      if (staff && staff.length > 0) {
+        setLocalUsers(staff);
+      }
+    });
+  }, []);
 
   // New Parameter state
   const [showAddParam, setShowAddParam] = useState(false);
@@ -726,7 +731,7 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
               <div>
                 <h3 className="text-sm font-bold text-slate-900 dark:text-white">Authorized Laboratory Personnel</h3>
                 <p className="text-xs text-slate-500 dark:text-slate-400">
-                  Manage accounts for Dorean, Hawa, and Admin. Passwords default to "password".
+                  Staff profiles loaded securely from Supabase.
                 </p>
               </div>
             </div>
@@ -752,7 +757,7 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
 
                   <div>
                     <label className="block text-[11px] font-semibold text-slate-600 dark:text-slate-400 mb-0.5">
-                      Username
+                      Username / Email
                     </label>
                     <input
                       type="text"
@@ -764,17 +769,17 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
 
                   <div>
                     <label className="block text-[11px] font-semibold text-slate-600 dark:text-slate-400 mb-0.5">
-                      Password
+                      Display Name
                     </label>
                     <input
                       type="text"
-                      value={u.password || 'password'}
+                      value={u.displayName}
                       onChange={(e) => {
                         const updated = [...localUsers];
-                        updated[idx].password = e.target.value;
+                        updated[idx].displayName = e.target.value;
                         setLocalUsers(updated);
                       }}
-                      className="w-full px-2 py-1 rounded border border-slate-300 dark:border-slate-700 bg-white dark:bg-slate-800 text-slate-900 dark:text-white text-xs font-mono"
+                      className="w-full px-2 py-1 rounded border border-slate-300 dark:border-slate-700 bg-white dark:bg-slate-800 text-slate-900 dark:text-white text-xs font-semibold"
                     />
                   </div>
 
@@ -800,12 +805,15 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
             <div className="pt-4 border-t border-slate-100 dark:border-slate-800 flex justify-end">
               <button
                 type="button"
-                onClick={() => {
-                  onSaveUsers(localUsers);
+                onClick={async () => {
+                  for (const u of localUsers) {
+                    await updateStaffProfile(u.username, u.displayName, u.title);
+                  }
                   setUserSavedAlert(true);
                   setTimeout(() => setUserSavedAlert(false), 3000);
+                  showSuccess('User profiles updated successfully!');
                 }}
-                className="px-6 py-2.5 bg-teal-700 hover:bg-teal-800 text-white rounded-lg text-xs sm:text-sm font-semibold flex items-center space-x-2 shadow-xs transition-colors"
+                className="px-6 py-2.5 bg-teal-700 hover:bg-teal-800 text-white rounded-lg text-xs sm:text-sm font-semibold flex items-center space-x-2 shadow-xs transition-colors cursor-pointer"
               >
                 <Save className="w-4 h-4" />
                 <span>Save User Accounts</span>

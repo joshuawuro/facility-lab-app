@@ -1,41 +1,43 @@
 import React, { useState } from 'react';
 import { Shield, User, Lock, ArrowRight, Eye, EyeOff, Activity, Sparkles, CheckCircle2 } from './Icons';
 import { UserAccount, FacilitySettings } from '../types';
+import { signInWithSupabase } from '../services/authService';
 
 interface LoginPortalProps {
-  users: UserAccount[];
   facilitySettings: FacilitySettings;
   onLogin: (user: UserAccount) => void;
 }
 
 export const LoginPortal: React.FC<LoginPortalProps> = ({
-  users,
   facilitySettings,
   onLogin,
 }) => {
-  const [username, setUsername] = useState<string>('');
+  const [email, setEmail] = useState<string>('');
   const [password, setPassword] = useState<string>('');
   const [showPassword, setShowPassword] = useState<boolean>(false);
   const [error, setError] = useState<string>('');
+  const [loading, setLoading] = useState<boolean>(false);
 
-  const handleSubmit = (e: React.FormEvent) => {
+  const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
-    const cleanUsername = username.trim().toLowerCase();
-    const foundUser = users.find(
-      (u) => u.username.toLowerCase() === cleanUsername
-    );
+    setError('');
+    setLoading(true);
 
-    if (!foundUser) {
-      setError('User account not found. Please verify your username.');
-      return;
+    try {
+      const { user, error: authError } = await signInWithSupabase(email, password);
+
+      if (authError || !user) {
+        setError(authError || 'Failed to authenticate. Please check your credentials.');
+        setLoading(false);
+        return;
+      }
+
+      onLogin(user);
+    } catch (err: any) {
+      setError(err.message || 'An error occurred during authentication.');
+    } finally {
+      setLoading(false);
     }
-
-    if (foundUser.password && foundUser.password !== password) {
-      setError('Incorrect password. Default password is "password"');
-      return;
-    }
-
-    onLogin(foundUser);
   };
 
   return (
@@ -79,7 +81,7 @@ export const LoginPortal: React.FC<LoginPortalProps> = ({
                 Sign in to account
               </h1>
               <p className="text-xs sm:text-sm text-slate-500 dark:text-slate-400 mt-1.5 font-medium">
-                Enter your credentials to access laboratory test entries, reports & auditing
+                Enter your email and password to access laboratory test entries, reports & auditing
               </p>
             </div>
 
@@ -93,18 +95,18 @@ export const LoginPortal: React.FC<LoginPortalProps> = ({
 
             {/* Form */}
             <form onSubmit={handleSubmit} className="space-y-4">
-              {/* Username Input */}
+              {/* Email Input */}
               <div>
                 <label className="block text-[11px] font-bold uppercase tracking-wider text-slate-600 dark:text-slate-400 mb-1.5 ml-1">
-                  Username
+                  Email address
                 </label>
                 <div className="relative">
                   <input
-                    type="text"
+                    type="email"
                     required
-                    value={username}
-                    onChange={(e) => setUsername(e.target.value)}
-                    placeholder="Enter your username"
+                    value={email}
+                    onChange={(e) => setEmail(e.target.value)}
+                    placeholder="e.g. dorean@carepolyclinic.com"
                     className="w-full px-5 py-3.5 rounded-full border border-slate-200 dark:border-slate-700 bg-slate-50/70 dark:bg-slate-800/80 text-slate-900 dark:text-white text-sm font-semibold focus:outline-none focus:ring-2 focus:ring-teal-500/30 focus:border-teal-600 dark:focus:border-teal-500 transition-all placeholder:text-slate-400"
                   />
                   <div className="absolute right-4 top-1/2 -translate-y-1/2 text-slate-400 pointer-events-none">
@@ -142,9 +144,12 @@ export const LoginPortal: React.FC<LoginPortalProps> = ({
               <div className="pt-2">
                 <button
                   type="submit"
-                  className="w-full py-3.5 rounded-full bg-teal-700 hover:bg-teal-800 active:scale-[0.99] text-white font-extrabold text-sm shadow-md shadow-teal-700/25 flex items-center justify-center space-x-2 transition-all cursor-pointer"
+                  disabled={loading}
+                  className={`w-full py-3.5 rounded-full bg-teal-700 hover:bg-teal-800 active:scale-[0.99] text-white font-extrabold text-sm shadow-md shadow-teal-700/25 flex items-center justify-center space-x-2 transition-all cursor-pointer ${
+                    loading ? 'opacity-70 cursor-wait' : ''
+                  }`}
                 >
-                  <span>Sign In to Laboratory</span>
+                  <span>{loading ? 'Authenticating...' : 'Sign In to Laboratory'}</span>
                   <ArrowRight className="w-4 h-4" />
                 </button>
               </div>

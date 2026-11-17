@@ -1,0 +1,16 @@
+# Dependencies
+node_modules/
+
+# Production build & cache
+dist/
+*.tsbuildinfo
+
+# Local environment files (NEVER commit secrets or API keys)
+.env.local
+.env.*.local
+
+# Editor & OS files
+.vscode/
+.idea/
+.DS_Store
+Thumbs.db
