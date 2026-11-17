@@ -27,7 +27,7 @@ import {
   Key,
   Check,
   Upload,
-  UploadCloud,
+
   Sparkles,
   Bell,
   TrendingUp,
@@ -35,7 +35,7 @@ import {
   Eye,
 } from './Icons';
 import { SavedReport, UserAccount, LabTest, FacilitySettings, TestParameter } from '../types';
-import { exportBackupJSON, importBackupJSON } from '../utils/storage';
+
 import { useToast } from '../context/ToastContext';
 import { getDailyRevenueCents, getTotalGrossRevenueCents, formatCentsGHC, getTestPriceCents, getReportRevenueCents } from '../utils/revenue';
 import { RevenueCard } from './RevenueCard';
@@ -184,7 +184,7 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({
   onViewReport,
 }) => {
   const { showSuccess, showError, showWarning, askConfirm } = useToast();
-  const [activeAdminTab, setActiveAdminTab] = useState<'stats' | 'catalog' | 'doctors' | 'scientists' | 'facility' | 'backup' | 'audit'>('stats');
+  const [activeAdminTab, setActiveAdminTab] = useState<'stats' | 'catalog' | 'doctors' | 'scientists' | 'facility' | 'audit'>('stats');
 
   // Audit Logs State
   const [auditLogs, setAuditLogs] = useState<AuditLogEntry[]>([]);
@@ -939,34 +939,7 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({
     showSuccess('Facility header settings updated successfully!');
   };
 
-  const handleExportBackup = () => {
-    const jsonStr = exportBackupJSON();
-    const blob = new Blob([jsonStr], { type: 'application/json' });
-    const url = URL.createObjectURL(blob);
-    const a = document.createElement('a');
-    a.href = url;
-    a.download = `care_lab_backup_${new Date().toISOString().split('T')[0]}.json`;
-    a.click();
-    URL.revokeObjectURL(url);
-    showSuccess('Database backup downloaded successfully.');
-  };
 
-  const handleImportBackup = (e: React.ChangeEvent<HTMLInputElement>) => {
-    const file = e.target.files?.[0];
-    if (file) {
-      const reader = new FileReader();
-      reader.onload = () => {
-        const success = importBackupJSON(reader.result as string);
-        if (success) {
-          showSuccess('Backup restored successfully! Reloading...');
-          setTimeout(() => window.location.reload(), 1500);
-        } else {
-          showError('Failed to parse backup JSON file.');
-        }
-      };
-      reader.readAsText(file);
-    }
-  };
 
   const currentTestDef = localCatalog.find((t) => t.id === selectedCatalogTestId) || localCatalog[0];
 
@@ -1048,10 +1021,10 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({
         <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
           <div className="flex items-center justify-center py-3.5 overflow-x-auto scrollbar-none">
             {/* Centered Navigation Pills */}
-            <nav className="flex items-center gap-1.5 p-1.5 bg-slate-100/90 rounded-2xl border border-slate-200/80 shadow-xs shrink-0">
+            <nav className="flex items-center gap-1.5 p-1.5 bg-slate-100/90 rounded-full border border-slate-200/80 shadow-xs shrink-0">
               <button
                 onClick={() => setActiveAdminTab('stats')}
-                className={`px-5 py-2.5 rounded-xl text-xs font-black flex items-center space-x-2 transition-all cursor-pointer ${activeAdminTab === 'stats'
+                className={`px-5 py-2.5 rounded-full text-xs font-black flex items-center space-x-2 transition-all cursor-pointer ${activeAdminTab === 'stats'
                     ? 'bg-teal-700 text-white shadow-md shadow-teal-700/25 ring-1 ring-teal-500/40'
                     : 'text-slate-600 hover:text-slate-900 hover:bg-slate-200/70'
                   }`}
@@ -1062,7 +1035,7 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({
 
               <button
                 onClick={() => setActiveAdminTab('catalog')}
-                className={`px-5 py-2.5 rounded-xl text-xs font-black flex items-center space-x-2 transition-all cursor-pointer ${activeAdminTab === 'catalog'
+                className={`px-5 py-2.5 rounded-full text-xs font-black flex items-center space-x-2 transition-all cursor-pointer ${activeAdminTab === 'catalog'
                     ? 'bg-teal-700 text-white shadow-md shadow-teal-700/25 ring-1 ring-teal-500/40'
                     : 'text-slate-600 hover:text-slate-900 hover:bg-slate-200/70'
                   }`}
@@ -1073,7 +1046,7 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({
 
               <button
                 onClick={() => setActiveAdminTab('scientists')}
-                className={`px-5 py-2.5 rounded-xl text-xs font-black flex items-center space-x-2 transition-all cursor-pointer ${activeAdminTab === 'scientists'
+                className={`px-5 py-2.5 rounded-full text-xs font-black flex items-center space-x-2 transition-all cursor-pointer ${activeAdminTab === 'scientists'
                     ? 'bg-teal-700 text-white shadow-md shadow-teal-700/25 ring-1 ring-teal-500/40'
                     : 'text-slate-600 hover:text-slate-900 hover:bg-slate-200/70'
                   }`}
@@ -1084,7 +1057,7 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({
 
               <button
                 onClick={() => setActiveAdminTab('doctors')}
-                className={`px-5 py-2.5 rounded-xl text-xs font-black flex items-center space-x-2 transition-all cursor-pointer ${activeAdminTab === 'doctors'
+                className={`px-5 py-2.5 rounded-full text-xs font-black flex items-center space-x-2 transition-all cursor-pointer ${activeAdminTab === 'doctors'
                     ? 'bg-teal-700 text-white shadow-md shadow-teal-700/25 ring-1 ring-teal-500/40'
                     : 'text-slate-600 hover:text-slate-900 hover:bg-slate-200/70'
                   }`}
@@ -1095,7 +1068,7 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({
 
               <button
                 onClick={() => setActiveAdminTab('facility')}
-                className={`px-5 py-2.5 rounded-xl text-xs font-black flex items-center space-x-2 transition-all cursor-pointer ${activeAdminTab === 'facility'
+                className={`px-5 py-2.5 rounded-full text-xs font-black flex items-center space-x-2 transition-all cursor-pointer ${activeAdminTab === 'facility'
                     ? 'bg-teal-700 text-white shadow-md shadow-teal-700/25 ring-1 ring-teal-500/40'
                     : 'text-slate-600 hover:text-slate-900 hover:bg-slate-200/70'
                   }`}
@@ -1109,7 +1082,7 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({
                   setActiveAdminTab('audit');
                   loadAuditLogs();
                 }}
-                className={`px-5 py-2.5 rounded-xl text-xs font-black flex items-center space-x-2 transition-all cursor-pointer ${activeAdminTab === 'audit'
+                className={`px-5 py-2.5 rounded-full text-xs font-black flex items-center space-x-2 transition-all cursor-pointer ${activeAdminTab === 'audit'
                     ? 'bg-teal-700 text-white shadow-md shadow-teal-700/25 ring-1 ring-teal-500/40'
                     : 'text-slate-600 hover:text-slate-900 hover:bg-slate-200/70'
                   }`}
@@ -1118,16 +1091,7 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({
                 <span>Audit Trail</span>
               </button>
 
-              <button
-                onClick={() => setActiveAdminTab('backup')}
-                className={`px-5 py-2.5 rounded-xl text-xs font-black flex items-center space-x-2 transition-all cursor-pointer ${activeAdminTab === 'backup'
-                    ? 'bg-teal-700 text-white shadow-md shadow-teal-700/25 ring-1 ring-teal-500/40'
-                    : 'text-slate-600 hover:text-slate-900 hover:bg-slate-200/70'
-                  }`}
-              >
-                <Download className="w-3.5 h-3.5" />
-                <span>Backup</span>
-              </button>
+
             </nav>
           </div>
         </div>
@@ -2955,41 +2919,6 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({
           </div>
         )}
 
-        {/* ======================================================== */}
-        {/* TAB 5: SYSTEM BACKUP & TRANSFER */}
-        {/* ======================================================== */}
-        {activeAdminTab === 'backup' && (
-          <div className="bg-white/90 backdrop-blur-md rounded-[2rem] shadow-xs border border-slate-200/80 p-6 sm:p-8 space-y-6">
-            <div className="max-w-xl space-y-6">
-              <div>
-                <h3 className="text-sm font-bold text-slate-900 mb-1">Export Full Lab Database</h3>
-                <p className="text-xs text-slate-500 mb-3">
-                  Download a JSON file containing all facility settings, test definitions, scientist accounts, and archived patient reports.
-                </p>
-                <button
-                  type="button"
-                  onClick={handleExportBackup}
-                  className="px-5 py-2.5 bg-teal-700 hover:bg-teal-800 text-white text-xs font-bold rounded-full flex items-center space-x-2 shadow-xs cursor-pointer"
-                >
-                  <Download className="w-4 h-4" />
-                  <span>Export Database Backup (.JSON)</span>
-                </button>
-              </div>
-
-              <div className="pt-6 border-t border-slate-200">
-                <h3 className="text-sm font-bold text-slate-900 mb-1">Restore from Backup</h3>
-                <p className="text-xs text-slate-500 mb-3">
-                  Upload a JSON database backup file to restore records on this workstation.
-                </p>
-                <label className="cursor-pointer inline-flex items-center space-x-2 px-5 py-2.5 bg-slate-100 hover:bg-slate-200 text-slate-800 rounded-full text-xs font-bold border border-slate-300">
-                  <UploadCloud className="w-4 h-4 text-teal-600" />
-                  <span>Choose Backup File (.JSON)</span>
-                  <input type="file" accept=".json,application/json" onChange={handleImportBackup} className="hidden" />
-                </label>
-              </div>
-            </div>
-          </div>
-        )}
 
         {/* ======================================================== */}
         {/* TAB 6: DOCTORS DIRECTORY */}

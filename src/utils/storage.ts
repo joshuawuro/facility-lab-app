@@ -157,27 +157,3 @@ export function deleteReport(reportId: string): SavedReport[] {
     return loadSavedReports();
   }
 }
-
-export function exportBackupJSON(): string {
-  const data = {
-    settings: loadFacilitySettings(),
-    catalog: loadTestCatalog(),
-    reports: loadSavedReports(),
-    exportedAt: new Date().toISOString(),
-    version: '2.0',
-  };
-  return JSON.stringify(data, null, 2);
-}
-
-export function importBackupJSON(jsonStr: string): boolean {
-  try {
-    const data = JSON.parse(jsonStr);
-    if (data.settings) saveFacilitySettings(data.settings);
-    if (data.catalog) saveTestCatalog(data.catalog);
-    if (data.reports) localStorage.setItem(REPORTS_KEY, JSON.stringify(data.reports));
-    return true;
-  } catch (e) {
-    console.error('Failed to import backup JSON', e);
-    return false;
-  }
-}

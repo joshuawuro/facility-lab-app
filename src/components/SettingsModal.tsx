@@ -9,14 +9,14 @@ import {
   RotateCcw,
   Plus,
   Check,
-  Download,
-  UploadCloud,
+
+
   ArrowRight,
   Sparkles,
   Users,
 } from './Icons';
 import { FacilitySettings, LabTest, TestParameter, UserAccount } from '../types';
-import { exportBackupJSON, importBackupJSON } from '../utils/storage';
+
 import { useToast } from '../context/ToastContext';
 import { fetchStaffProfiles, updateStaffProfile } from '../services/authService';
 
@@ -38,7 +38,7 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
   onClose,
 }) => {
   const { showSuccess, showError, showWarning, askConfirm } = useToast();
-  const [activeTab, setActiveTab] = useState<'facility' | 'ranges' | 'users' | 'backup'>('facility');
+  const [activeTab, setActiveTab] = useState<'facility' | 'ranges' | 'users'>('facility');
 
   // Facility Form State
   const [localSettings, setLocalSettings] = useState<FacilitySettings>({ ...facilitySettings });
@@ -227,33 +227,7 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
     setShowAddParam(false);
   };
 
-  const handleExportBackup = () => {
-    const jsonStr = exportBackupJSON();
-    const blob = new Blob([jsonStr], { type: 'application/json' });
-    const url = URL.createObjectURL(blob);
-    const a = document.createElement('a');
-    a.href = url;
-    a.download = `care_lab_backup_${new Date().toISOString().split('T')[0]}.json`;
-    a.click();
-    URL.revokeObjectURL(url);
-  };
 
-  const handleImportBackup = (e: React.ChangeEvent<HTMLInputElement>) => {
-    const file = e.target.files?.[0];
-    if (file) {
-      const reader = new FileReader();
-      reader.onload = () => {
-        const success = importBackupJSON(reader.result as string);
-        if (success) {
-          showSuccess('Backup restored successfully! Reloading...');
-          setTimeout(() => window.location.reload(), 1500);
-        } else {
-          showError('Failed to parse backup JSON file.');
-        }
-      };
-      reader.readAsText(file);
-    }
-  };
 
   const currentTestDef = localCatalog.find((t) => t.id === selectedTestId) || localCatalog[0];
 
@@ -319,17 +293,6 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
           <span>Scientists & Accounts</span>
         </button>
 
-        <button
-          onClick={() => setActiveTab('backup')}
-          className={`pb-3 text-xs sm:text-sm font-semibold border-b-2 flex items-center space-x-2 transition-colors ${
-            activeTab === 'backup'
-              ? 'border-teal-700 dark:border-teal-400 text-teal-700 dark:text-teal-400'
-              : 'border-transparent text-slate-500 hover:text-slate-800 dark:hover:text-slate-200'
-          }`}
-        >
-          <Download className="w-4 h-4" />
-          <span>Backup & Transfer</span>
-        </button>
       </div>
 
       {/* TAB 1: FACILITY DETAILS */}
@@ -823,44 +786,6 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
         </div>
       )}
 
-      {/* TAB 4: BACKUP & DATA TRANSFER */}
-      {activeTab === 'backup' && (
-        <div className="bg-white dark:bg-slate-900 rounded-b-xl shadow-xs border border-slate-200 dark:border-slate-800 border-t-0 p-6 sm:p-8 space-y-6 transition-colors">
-          <div className="max-w-xl space-y-6">
-            <div>
-              <h3 className="text-sm font-bold text-slate-900 dark:text-white mb-1">Export Lab Configuration & Archive</h3>
-              <p className="text-xs text-slate-500 dark:text-slate-400 mb-3">
-                Download a JSON backup with facility settings, user accounts, custom reference ranges, and saved patient records.
-              </p>
-              <button
-                type="button"
-                onClick={handleExportBackup}
-                className="px-4 py-2.5 bg-slate-900 hover:bg-black text-white text-xs font-semibold rounded-lg flex items-center space-x-2 transition-colors shadow-xs"
-              >
-                <Download className="w-4 h-4 text-teal-400" />
-                <span>Export Backup File (.json)</span>
-              </button>
-            </div>
-
-            <div className="pt-6 border-t border-slate-200 dark:border-slate-800">
-              <h3 className="text-sm font-bold text-slate-900 dark:text-white mb-1">Restore from Backup</h3>
-              <p className="text-xs text-slate-500 dark:text-slate-400 mb-3">
-                Upload a JSON backup file to restore records and settings on this machine.
-              </p>
-              <label className="cursor-pointer inline-flex items-center space-x-2 px-4 py-2.5 bg-slate-100 dark:bg-slate-800 hover:bg-slate-200 dark:hover:bg-slate-700 text-slate-800 dark:text-slate-200 rounded-lg text-xs font-semibold border border-slate-300 dark:border-slate-700 transition-colors">
-                <UploadCloud className="w-4 h-4 text-teal-700 dark:text-teal-400" />
-                <span>Choose Backup File (.json)</span>
-                <input
-                  type="file"
-                  accept=".json,application/json"
-                  onChange={handleImportBackup}
-                  className="hidden"
-                />
-              </label>
-            </div>
-          </div>
-        </div>
-      )}
     </div>
   );
 };
