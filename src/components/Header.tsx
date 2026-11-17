@@ -53,13 +53,13 @@ export const Header: React.FC<HeaderProps> = ({
   const navItems: { id: NavTab; label: string; icon: React.ReactNode; count?: number; scientistOnly?: boolean }[] = [
     ...(isScientist
       ? [
-          {
-            id: 'dashboard' as NavTab,
-            label: 'Dashboard',
-            icon: <BarChart3 className="w-3.5 h-3.5" />,
-            scientistOnly: true,
-          },
-        ]
+        {
+          id: 'dashboard' as NavTab,
+          label: 'Dashboard',
+          icon: <BarChart3 className="w-3.5 h-3.5" />,
+          scientistOnly: true,
+        },
+      ]
       : []),
     {
       id: 'report',
@@ -74,12 +74,12 @@ export const Header: React.FC<HeaderProps> = ({
     },
     ...(isAdmin
       ? [
-          {
-            id: 'settings' as NavTab,
-            label: 'Settings',
-            icon: <Settings className="w-3.5 h-3.5" />,
-          },
-        ]
+        {
+          id: 'settings' as NavTab,
+          label: 'Settings',
+          icon: <Settings className="w-3.5 h-3.5" />,
+        },
+      ]
       : []),
   ];
 
@@ -121,21 +121,19 @@ export const Header: React.FC<HeaderProps> = ({
                 <button
                   key={item.id}
                   onClick={() => setActiveTab(item.id)}
-                  className={`flex items-center gap-1.5 px-3.5 py-2 rounded-full text-xs font-bold transition-all cursor-pointer whitespace-nowrap ${
-                    isActive
+                  className={`flex items-center gap-1.5 px-3.5 py-2 rounded-full text-xs font-bold transition-all cursor-pointer whitespace-nowrap ${isActive
                       ? 'bg-teal-700 text-white shadow-sm shadow-teal-700/20'
                       : 'text-slate-500 dark:text-slate-400 hover:bg-slate-100 dark:hover:bg-slate-800 hover:text-slate-800 dark:hover:text-slate-200'
-                  }`}
+                    }`}
                 >
                   {item.icon}
                   <span className="hidden sm:inline">{item.label}</span>
                   {item.count !== undefined && item.count > 0 && (
                     <span
-                      className={`text-[10px] px-1.5 py-0 rounded-full font-extrabold leading-5 ${
-                        isActive
+                      className={`text-[10px] px-1.5 py-0 rounded-full font-extrabold leading-5 ${isActive
                           ? 'bg-white/20 text-white'
                           : 'bg-teal-100 text-teal-800 dark:bg-teal-900/40 dark:text-teal-300'
-                      }`}
+                        }`}
                     >
                       {item.count}
                     </span>
@@ -165,9 +163,8 @@ export const Header: React.FC<HeaderProps> = ({
               title={`Signed in as ${currentUser.displayName}. Click to sign out.`}
             >
               <div
-                className={`w-6 h-6 rounded-full flex items-center justify-center text-[10px] font-black text-white ${
-                  isAdmin ? 'bg-slate-900 dark:bg-slate-600' : 'bg-teal-700'
-                }`}
+                className={`w-6 h-6 rounded-full flex items-center justify-center text-[10px] font-black text-white ${isAdmin ? 'bg-slate-900 dark:bg-slate-600' : 'bg-teal-700'
+                  }`}
               >
                 {isAdmin ? <Shield className="w-3 h-3" /> : <User className="w-3.5 h-3.5" />}
               </div>
@@ -198,22 +195,20 @@ export const Header: React.FC<HeaderProps> = ({
                     <button
                       onClick={() => isAccessible && setCurrentStep(s.number)}
                       disabled={!isAccessible}
-                      className={`flex items-center space-x-2 py-1 px-3 rounded-full text-xs font-bold transition-all ${
-                        isActive
+                      className={`flex items-center space-x-2 py-1 px-3 rounded-full text-xs font-bold transition-all ${isActive
                           ? 'bg-teal-100 dark:bg-teal-950/60 text-teal-900 dark:text-teal-200 ring-1 ring-teal-500/50 shadow-2xs'
                           : isPassed
-                          ? 'text-slate-700 dark:text-slate-300 hover:bg-slate-100 dark:hover:bg-slate-800 cursor-pointer'
-                          : 'text-slate-400 dark:text-slate-600 cursor-not-allowed opacity-60'
-                      }`}
+                            ? 'text-slate-700 dark:text-slate-300 hover:bg-slate-100 dark:hover:bg-slate-800 cursor-pointer'
+                            : 'text-slate-400 dark:text-slate-600 cursor-not-allowed opacity-60'
+                        }`}
                     >
                       <div
-                        className={`w-5 h-5 rounded-full flex items-center justify-center text-[10px] font-black ${
-                          isActive
+                        className={`w-5 h-5 rounded-full flex items-center justify-center text-[10px] font-black ${isActive
                             ? 'bg-teal-700 text-white shadow-xs'
                             : isPassed
-                            ? 'bg-emerald-600 text-white'
-                            : 'bg-slate-200 dark:bg-slate-800 text-slate-500'
-                        }`}
+                              ? 'bg-emerald-600 text-white'
+                              : 'bg-slate-200 dark:bg-slate-800 text-slate-500'
+                          }`}
                       >
                         {isPassed ? <CheckCircle2 className="w-3.5 h-3.5" /> : s.number}
                       </div>
@@ -222,9 +217,8 @@ export const Header: React.FC<HeaderProps> = ({
 
                     {idx < steps.length - 1 && (
                       <div
-                        className={`flex-1 mx-2 sm:mx-3 h-0.5 rounded-full transition-colors ${
-                          currentStep > s.number ? 'bg-emerald-500' : 'bg-slate-200 dark:bg-slate-800'
-                        }`}
+                        className={`flex-1 mx-2 sm:mx-3 h-0.5 rounded-full transition-colors ${currentStep > s.number ? 'bg-emerald-500' : 'bg-slate-200 dark:bg-slate-800'
+                          }`}
                       />
                     )}
                   </React.Fragment>
