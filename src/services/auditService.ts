@@ -24,12 +24,19 @@ export interface AuditLogEntry {
   created_at: string;
 }
 
+export interface AuditActor {
+  id?: string | null;
+  email?: string | null;
+  role?: string | null;
+}
+
 export const logAudit = async (
   action: AuditAction,
   entityName: string,
   entityId: string,
   beforeData: any = null,
-  afterData: any = null
+  afterData: any = null,
+  actor?: AuditActor | null
 ): Promise<void> => {
   if (!isSupabaseConfigured()) {
     console.info(`[Audit Offline] ${action} on ${entityName}:${entityId}`);
@@ -37,30 +44,46 @@ export const logAudit = async (
   }
 
   try {
-    const { data: { user } } = await supabase.auth.getUser();
+    let userId = actor?.id ?? null;
+    let userEmail = actor?.email ?? null;
+    let userRole = actor?.role ?? null;
 
-    let userRole = (user?.user_metadata?.role as string) || null;
-    if (!userRole && user?.id) {
-      const { data: profile } = await supabase
-        .from('profiles')
-        .select('role')
-        .eq('id', user.id)
-        .maybeSingle();
-      if (profile?.role) {
-        userRole = profile.role;
+    // If actor details are not supplied, inspect active Supabase session
+    if (!userId || !userEmail || !userRole) {
+      const { data: { user } } = await supabase.auth.getUser();
+      if (user) {
+        if (!userId) userId = user.id;
+        if (!userEmail) userEmail = user.email || null;
+        if (!userRole) {
+          userRole = (user.user_metadata?.role as string) || null;
+          if (!userRole) {
+            const { data: profile } = await supabase
+              .from('profiles')
+              .select('role')
+              .eq('id', user.id)
+              .maybeSingle();
+            if (profile?.role) {
+              userRole = profile.role;
+            }
+          }
+        }
       }
     }
 
-    await supabase.from('audit_logs').insert({
-      user_id: user?.id || null,
-      user_email: user?.email || null,
-      user_role: userRole,
+    const { error: insertError } = await supabase.from('audit_logs').insert({
+      user_id: userId,
+      user_email: userEmail,
+      user_role: userRole || 'scientist',
       action,
       entity_name: entityName,
       entity_id: entityId,
       before_data: beforeData,
       after_data: afterData,
     });
+
+    if (insertError) {
+      console.error(`Failed to record audit log (${action}):`, insertError);
+    }
   } catch (err) {
     // Audit logging should never crash the main clinical workflow
     console.error('Failed to record audit log:', err);

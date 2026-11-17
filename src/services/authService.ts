@@ -57,7 +57,14 @@ export const signInWithSupabase = async (
       };
 
       setLocalCurrentUser(appUser);
-      await logAudit('user_login', 'profiles', data.user.id, null, { email: cleanEmail, role });
+      await logAudit(
+        'user_login',
+        'profiles',
+        data.user.id,
+        null,
+        { email: cleanEmail, role, displayName },
+        { id: data.user.id, email: cleanEmail, role }
+      );
       return { user: appUser, error: null };
     }
 
@@ -69,10 +76,18 @@ export const signInWithSupabase = async (
     };
 
     setLocalCurrentUser(appUser);
-    await logAudit('user_login', 'profiles', profileData.id, null, {
-      full_name: profileData.full_name,
-      role: profileData.role,
-    });
+    await logAudit(
+      'user_login',
+      'profiles',
+      profileData.id,
+      null,
+      {
+        email: cleanEmail,
+        full_name: profileData.full_name,
+        role: profileData.role,
+      },
+      { id: profileData.id, email: cleanEmail, role: profileData.role }
+    );
 
     return { user: appUser, error: null };
   } catch (err: any) {
@@ -84,12 +99,27 @@ export const signOutSupabase = async (currentUser?: UserAccount | null): Promise
   if (isSupabaseConfigured()) {
     try {
       const { data: { user } } = await supabase.auth.getUser();
-      if (user) {
-        await logAudit('user_logout', 'profiles', user.id, null, {
-          email: user.email,
-          displayName: currentUser?.displayName || null,
-          role: currentUser?.role || null,
-        });
+      const userId = user?.id || null;
+      const userEmail = user?.email || (currentUser?.username?.includes('@') ? currentUser.username : (currentUser?.username ? `${currentUser.username}@carepolyclinic.com` : null));
+      const userRole = currentUser?.role || (user?.user_metadata?.role as UserRole) || 'scientist';
+
+      if (userId || userEmail) {
+        await logAudit(
+          'user_logout',
+          'profiles',
+          userId || 'staff_session',
+          null,
+          {
+            email: userEmail,
+            displayName: currentUser?.displayName || null,
+            role: userRole,
+          },
+          {
+            id: userId,
+            email: userEmail,
+            role: userRole,
+          }
+        );
       }
       await supabase.auth.signOut();
     } catch (err) {

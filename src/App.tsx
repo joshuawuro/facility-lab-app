@@ -289,8 +289,8 @@ export const App: React.FC = () => {
     setActiveTab('dashboard');
     setAdminViewingReport(null);
 
-    clearCurrentUser();
     await signOutSupabase(currentUser);
+    clearCurrentUser();
     setCurrentUserState(null);
     showSuccess(`Successfully signed out. Workspace reset for the next user.`);
   };
